@@ -16,9 +16,14 @@ public class LifxPlugin : IPlugin
     public const string ColorProfileCode = "LIFX_COLOR";
     public const string PortType = "LIFX";
 
+    private static readonly TimeSpan PersistTimeout = TimeSpan.FromSeconds(5);
+
     private readonly List<IDisposable> registrations = [];
     private readonly LifxDiscoverFunc? discoverOverride;
     private readonly LifxDatagramSender? sendOverride;
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly object persistGate = new();
+    private Task persistInFlight = Task.CompletedTask;
 
     public LifxPlugin()
         : this(null, null)
@@ -31,18 +36,41 @@ public class LifxPlugin : IPlugin
         this.sendOverride = sendOverride;
         Info = new()
         {
-            Id = "lifx",
-            Name = "LIFX",
-            Version = "0.2.0",
+            // Id/Name/Version come from the csproj (PluginId,
+            // PluginDisplayName, Version) via the SDK-generated
+            // PluginBuildInfo, always in sync with the generated manifest.json
+            Id = PluginBuildInfo.Id,
+            Name = PluginBuildInfo.Name,
+            Version = PluginBuildInfo.Version,
             Description = "Drives LIFX WiFi bulbs and SuperColour / pixel fixtures from DMX over the LAN protocol.",
         };
     }
 
     public PluginInfo Info { get; }
 
-    public Task InitializeAsync(IPluginHost host, CancellationToken cancellationToken)
+    public async Task InitializeAsync(IPluginHost host, CancellationToken cancellationToken)
     {
         var discovery = new LifxDiscovery(this.discoverOverride);
+
+        // Seed the discovery cache from persisted state so targets and pixel
+        // geometry survive restarts; every completed scan refreshes the blob
+        discovery.Seed(LifxLightState.Deserialize(await host.GetStateJsonAsync(cancellationToken)));
+        var persistWrites = new SemaphoreSlim(1, 1);
+        discovery.ScanCompleted = lights =>
+        {
+            string json = LifxLightState.Serialize(lights);
+            lock (this.persistGate)
+            {
+                if (this.lifetime.IsCancellationRequested)
+                {
+                    return Task.FromCanceled(this.lifetime.Token);
+                }
+
+                Task persist = this.PersistStateAsync(host, persistWrites, json);
+                this.persistInFlight = persist;
+                return persist;
+            }
+        };
 
         this.registrations.Add(host.Outputs.RegisterFixtureProfile(new PluginFixtureProfileDescriptor
         {
@@ -88,18 +116,46 @@ public class LifxPlugin : IPlugin
             new LifxPixelProtocol(discovery, this.sendOverride)));
 
         host.SetConnectionState(true, "LIFX output ready");
-        return Task.CompletedTask;
     }
 
-    public Task ShutdownAsync(CancellationToken cancellationToken)
+    public async Task ShutdownAsync(CancellationToken cancellationToken)
     {
+        Task inFlight;
+        lock (this.persistGate)
+        {
+            this.lifetime.Cancel();
+            inFlight = this.persistInFlight;
+        }
+
+        try
+        {
+            await inFlight;
+        }
+        catch (Exception)
+        {
+        }
+
         foreach (IDisposable registration in this.registrations)
         {
             registration.Dispose();
         }
 
         this.registrations.Clear();
-        return Task.CompletedTask;
+    }
+
+    private async Task PersistStateAsync(IPluginHost host, SemaphoreSlim persistWrites, string json)
+    {
+        using var persistCts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
+        persistCts.CancelAfter(PersistTimeout);
+        await persistWrites.WaitAsync(persistCts.Token);
+        try
+        {
+            await host.SetStateJsonAsync(json, persistCts.Token);
+        }
+        finally
+        {
+            persistWrites.Release();
+        }
     }
 
     private static OutputProtocolDescriptor PixelDescriptor() =>
@@ -111,6 +167,16 @@ public class LifxPlugin : IPlugin
             PortTypeDisplayName = "LIFX",
             MaxUpdatesPerSecond = LifxConstants.MaxUpdatesPerSecond,
             SupportsDestinationDiscovery = true,
+            MappingFields =
+            [
+                new PluginSettingDescriptor
+                {
+                    Key = LifxPixelProtocol.PixelsOptionKey,
+                    Label = "Pixels",
+                    Type = PluginSettingType.Integer,
+                    Description = "Pixel count of the device; filled automatically when a discovered device is picked",
+                },
+            ],
         };
 
     private static OutputProtocolDescriptor Descriptor(string id, string displayName, string personality) =>

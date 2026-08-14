@@ -32,6 +32,30 @@ internal sealed class LifxDiscovery
         this.discoverOverride = discoverOverride;
     }
 
+    /// <summary>
+    /// Invoked whenever a scan completes with at least one light, so the
+    /// plugin can persist the snapshot. The scan does not complete until
+    /// this callback returns, which lets callers await persistence.
+    /// </summary>
+    public Func<IReadOnlyList<LifxLight>, Task>? ScanCompleted { get; set; }
+
+    /// <summary>
+    /// Pre-populate the cache from persisted state. Ignored once a live scan
+    /// has run; a live snapshot always wins over a restored one.
+    /// </summary>
+    public void Seed(IReadOnlyList<LifxLight> lights)
+    {
+        if (lights.Count == 0)
+        {
+            return;
+        }
+
+        lock (this.gate)
+        {
+            this.cached ??= lights;
+        }
+    }
+
     public async Task<IReadOnlyList<LifxLight>> GetLightsAsync(bool refresh, CancellationToken cancellationToken)
     {
         TaskCompletionSource<IReadOnlyList<LifxLight>>? owner = null;
@@ -80,6 +104,17 @@ internal sealed class LifxDiscovery
                 .Where(static light => light.IsLight && !LifxProducts.IsSwitch((int)light.Product, light.ModelName))
                 .ToArray();
             this.cached = lights;
+            if (lights.Count > 0 && ScanCompleted is { } onCompleted)
+            {
+                try
+                {
+                    await onCompleted(lights);
+                }
+                catch
+                {
+                }
+            }
+
             owner.TrySetResult(lights);
         }
         catch (Exception ex)

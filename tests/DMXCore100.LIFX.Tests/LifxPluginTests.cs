@@ -341,6 +341,122 @@ public class LifxPluginTests
     }
 
     [TestMethod]
+    public async Task PixelGetChannelCount_HonorsStoredPixelsOptionWithoutDiscovery()
+    {
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+
+        // No discovery has run: the stored mapping option alone must supply
+        // the channel count (the cold-start case)
+        PluginOutputMappingConfig config = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string> { [LifxPixelProtocol.PixelsOptionKey] = "52" },
+        };
+
+        Assert.AreEqual(156, protocol.GetChannelCount(config));
+        Assert.AreEqual(0, protocol.GetChannelCount(Mapping("192.168.1.30")));
+    }
+
+    [TestMethod]
+    public async Task PixelGetChannelCount_IgnoresPixelsOptionThatWouldOverflow()
+    {
+        var (_, host, _) = await CreateInitializedAsync();
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+
+        PluginOutputMappingConfig config = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string>
+            {
+                [LifxPixelProtocol.PixelsOptionKey] = (int.MaxValue / 3 + 1).ToString(),
+            },
+        };
+
+        Assert.AreEqual(0, protocol.GetChannelCount(config));
+    }
+
+    [TestMethod]
+    public async Task PixelDiscover_StampsPixelsOptionOnDestinations()
+    {
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+
+        IReadOnlyList<PluginOutputDestinationOption>? options =
+            await Protocol(host, LifxPlugin.PixelProtocolId)
+                .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        Assert.IsNotNull(options);
+        Assert.AreEqual("52", options[0].Options?[LifxPixelProtocol.PixelsOptionKey]);
+    }
+
+    [TestMethod]
+    public async Task Discovery_PersistsToStateJsonAndSeedsNextInstance()
+    {
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        _ = await Protocol(host, LifxPlugin.PixelProtocolId)
+            .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        Assert.IsNotNull(host.StateJson);
+        StringAssert.Contains(host.StateJson, "192.168.1.30");
+
+        // A fresh plugin instance on a host with that state - and a scanner
+        // that finds nothing - must still know the device from the seed
+        var plugin = new LifxPlugin(
+            (_, _) => Task.FromResult<IReadOnlyList<LifxLight>>([]),
+            null);
+        this.plugins.Add(plugin);
+        var restartedHost = new TestPluginHost(plugin.Info, logOutput: _ => { })
+        {
+            StateJson = host.StateJson,
+        };
+        await plugin.InitializeAsync(restartedHost, CancellationToken.None);
+
+        IPluginOutputProtocol protocol = Protocol(restartedHost, LifxPlugin.PixelProtocolId);
+        Assert.AreEqual(156, protocol.GetChannelCount(Mapping("192.168.1.30")));
+
+        IReadOnlyList<PluginOutputDestinationOption>? destinations =
+            await protocol.GetDestinationOptionsAsync(refresh: false, CancellationToken.None);
+        Assert.IsNotNull(destinations);
+        Assert.AreEqual(1, destinations.Count);
+        Assert.AreEqual("192.168.1.30", destinations[0].Value);
+    }
+
+    [TestMethod]
+    public async Task ScanCompleted_IsAwaitedBeforeGetLightsAsyncReturns()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var discovery = new LifxDiscovery((_, _) =>
+            Task.FromResult<IReadOnlyList<LifxLight>>([SuperColourTube()]));
+        discovery.ScanCompleted = async _ =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+        };
+
+        Task<IReadOnlyList<LifxLight>> get = discovery.GetLightsAsync(refresh: true, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(get.IsCompleted);
+
+        release.SetResult();
+        IReadOnlyList<LifxLight> lights = await get.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(1, lights.Count);
+        Assert.AreEqual("192.168.1.30", lights[0].Ip);
+    }
+
+    [TestMethod]
+    public void Header_SetsTaggedBitForZeroTarget()
+    {
+        var packets = new LifxPackets(12345, static () => 1);
+
+        byte[] zeroTarget = packets.SetColor(new byte[8], new Hsbk(0, 0, 0, 3500), 75);
+        byte[] realTarget = packets.SetColor([1, 2, 3, 4, 5, 6, 7, 8], new Hsbk(0, 0, 0, 3500), 75);
+
+        ushort zeroFrame = BinaryPrimitives.ReadUInt16LittleEndian(zeroTarget.AsSpan(2, 2));
+        ushort realFrame = BinaryPrimitives.ReadUInt16LittleEndian(realTarget.AsSpan(2, 2));
+        Assert.AreEqual(1, (zeroFrame >> 13) & 1, "zero target must be tagged");
+        Assert.AreEqual(0, (realFrame >> 13) & 1, "real target must stay untagged");
+    }
+
+    [TestMethod]
     public async Task SendPixel_WritesSet64ForSuperColourTube()
     {
         var (_, host, sent) = await CreateInitializedAsync([SuperColourTube()]);
