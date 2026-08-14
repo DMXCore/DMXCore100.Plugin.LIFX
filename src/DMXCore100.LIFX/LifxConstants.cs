@@ -6,7 +6,9 @@ internal static class LifxConstants
     public const int Protocol = 1024;
     public const int HeaderSize = 36;
     public const int DefaultKelvin = 3500;
-    public const int KelvinMin = 2500;
+    // 1500 is the real product floor (Candle, Neon); most bulbs clamp
+    // upward on their own
+    public const int KelvinMin = 1500;
     public const int KelvinMax = 9000;
     /// <summary>
     /// SetColor duration at <see cref="MaxUpdatesPerSecond"/>: ~1.5× the send

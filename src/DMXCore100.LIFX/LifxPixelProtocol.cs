@@ -10,6 +10,8 @@ namespace DMXCore100.LIFX;
 /// </summary>
 internal sealed class LifxPixelProtocol : IPluginOutputProtocol
 {
+    public const string PixelsOptionKey = "pixels";
+
     private readonly LifxDiscovery discovery;
     private readonly LifxDatagramSender? sender;
 
@@ -24,6 +26,16 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
         if (string.IsNullOrWhiteSpace(config.DestinationAddress))
         {
             return 0;
+        }
+
+        // The stored mapping option is authoritative: it survives restarts
+        // and is stamped by Discover, so the channel count never depends on
+        // the RAM discovery cache
+        if (config.Options.TryGetValue(PixelsOptionKey, out string? stored)
+            && int.TryParse(stored, out int pixels)
+            && pixels > 0)
+        {
+            return pixels * 3;
         }
 
         LifxLight? light = this.discovery.LightFor(config.DestinationAddress.Trim());
@@ -66,7 +78,15 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
             .Where(static light => light.ZoneCapable)
             .Select(static light => new PluginOutputDestinationOption(
                 light.Ip,
-                LifxDiscovery.DestinationLabel(light)))
+                LifxDiscovery.DestinationLabel(light))
+            {
+                // Stamped into the mapping's Pixels field on pick, so the
+                // channel count persists with the configuration
+                Options = new Dictionary<string, string>
+                {
+                    [PixelsOptionKey] = Math.Max(1, light.ZoneCount).ToString(),
+                },
+            })
             .ToArray();
     }
 }

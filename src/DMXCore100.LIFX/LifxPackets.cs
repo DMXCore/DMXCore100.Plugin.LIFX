@@ -290,6 +290,13 @@ internal sealed class LifxPackets
 
     private byte[] Header(ushort msgType, byte[]? target = null, bool tagged = false)
     {
+        // A zero target must be tagged or devices may drop the frame (the
+        // LAN spec reserves untagged frames for a real 8-byte target)
+        if (target is not { Length: 8 } || !target.Any(static b => b != 0))
+        {
+            tagged = true;
+        }
+
         const int addressable = 1;
         const int origin = 0;
         int frameBits =
