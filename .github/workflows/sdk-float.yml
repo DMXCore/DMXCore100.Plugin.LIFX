@@ -1,0 +1,37 @@
+name: SDK float
+
+# Weekly restore of DMXCore.PluginSdk 1.* so new SDK releases surface
+# breakage even when this repo is idle. Standard builds use the pinned
+# versions in the project files. Own workflow so it is not reported as a
+# skipped check on pull requests.
+on:
+  schedule:
+    - cron: '45 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-float:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore floating 1.* SDK
+        run: |
+          dotnet add src/DMXCore100.LIFX/DMXCore100.LIFX.csproj package DMXCore.PluginSdk --version 1.*
+          dotnet add tests/DMXCore100.LIFX.Tests/DMXCore100.LIFX.Tests.csproj package DMXCore.PluginSdk.Testing --version 1.*
+          dotnet add tools/DMXCore100.LIFX.DevHost/DMXCore100.LIFX.DevHost.csproj package DMXCore.PluginSdk.Testing --version 1.*
+
+      - name: Test against latest 1.* SDK
+        run: |
+          dotnet build tools/DMXCore100.LIFX.DevHost --configuration Release
+          dotnet test tests/DMXCore100.LIFX.Tests --configuration Release
