@@ -31,9 +31,12 @@ public class LifxPlugin : IPlugin
         this.sendOverride = sendOverride;
         Info = new()
         {
-            Id = "lifx",
-            Name = "LIFX",
-            Version = "0.2.0",
+            // Id/Name/Version come from the csproj (PluginId,
+            // PluginDisplayName, Version) via the SDK-generated
+            // PluginBuildInfo, always in sync with the generated manifest.json
+            Id = PluginBuildInfo.Id,
+            Name = PluginBuildInfo.Name,
+            Version = PluginBuildInfo.Version,
             Description = "Drives LIFX WiFi bulbs and SuperColour / pixel fixtures from DMX over the LAN protocol.",
         };
     }
