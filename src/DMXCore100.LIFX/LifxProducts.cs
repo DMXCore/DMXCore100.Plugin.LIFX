@@ -232,7 +232,7 @@ public static class LifxProducts
             return LifxLayout.Matrix;
         }
 
-        if (LinearIds.Contains(product) || ExtendedMultizoneIds.Contains(product))
+        if (LinearIds.Contains(product))
         {
             return LifxLayout.Linear;
         }

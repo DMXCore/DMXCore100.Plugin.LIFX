@@ -8,6 +8,16 @@ public class LifxProtocolTests
     private static LifxPackets Packets() => new(1, () => 1);
 
     [TestMethod]
+    public void Product72_SupportsExtendedMultizoneAndIsNotZoneCapable()
+    {
+        Assert.AreEqual("LIFX A19", LifxProducts.ModelName(1, 72));
+        Assert.AreEqual(LifxLayout.Single, LifxProducts.Layout(72));
+        Assert.IsTrue(LifxProducts.UsesExtendedMultizone(72));
+        var light = new LifxLight(new byte[8], "192.168.1.72") { Product = 72 };
+        Assert.IsFalse(light.ZoneCapable);
+    }
+
+    [TestMethod]
     public void SuperColourProducts_AreMatrix()
     {
         Assert.AreEqual("LIFX SuperColour Tube", LifxProducts.ModelName(1, 218));
@@ -39,6 +49,14 @@ public class LifxProtocolTests
         Assert.AreEqual(LifxLayout.Single, light.Layout);
         Assert.AreEqual(LifxLayout.Matrix, light.EffectiveLayout);
         Assert.IsTrue(light.ZoneCapable);
+    }
+
+    [TestMethod]
+    public void Set64_StopsBeforeEmptyChunks()
+    {
+        Hsbk[] colors = Enumerable.Repeat(new Hsbk(1, 2, 3, 3500), 64).ToArray();
+        IReadOnlyList<byte[]> packets = Packets().BuildSet64Packets(new byte[8], colors, 64, 3, 20);
+        Assert.AreEqual(1, packets.Count);
     }
 
     [TestMethod]

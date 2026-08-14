@@ -4,12 +4,17 @@ public static class LifxTargets
 {
     public static IReadOnlyList<LifxLight> Resolve(IReadOnlyList<LifxLight> lights, string target)
     {
-        if (string.Equals(target, "all", StringComparison.OrdinalIgnoreCase) || target == "*")
+        string needle = target.Trim();
+        if (string.Equals(needle, "all", StringComparison.OrdinalIgnoreCase) || needle == "*")
         {
             return lights;
         }
 
-        string needle = target.Trim();
+        if (needle.Length == 0)
+        {
+            return [];
+        }
+
         return lights.Where(light =>
                 string.Equals(light.Id, needle, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(light.Ip, needle, StringComparison.OrdinalIgnoreCase)

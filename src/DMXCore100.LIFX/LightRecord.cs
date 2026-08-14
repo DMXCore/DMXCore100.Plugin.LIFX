@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DMXCore.PluginSdk;
+using Microsoft.Extensions.Logging;
 
 namespace DMXCore100.LIFX;
 
@@ -32,8 +33,9 @@ public sealed class LightRecord
                 return JsonSerializer.Deserialize<LightRecord>(json) ?? new LightRecord();
             }
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            host.Logger.LogWarning(ex, "Discarding corrupt LIFX light record");
         }
 
         return new LightRecord();

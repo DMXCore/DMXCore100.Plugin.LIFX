@@ -112,26 +112,51 @@ public sealed class LifxPackets
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
-        int rowsPerPacket = Math.Max(1, LifxConstants.Set64ColorsPerPacket / width);
+        int xStep = Math.Min(width, LifxConstants.Set64ColorsPerPacket);
+        int rowsPerPacket = Math.Max(1, LifxConstants.Set64ColorsPerPacket / xStep);
         var packets = new List<byte[]>();
         for (int y = 0; y < height; y += rowsPerPacket)
         {
-            int start = y * width;
-            int take = Math.Min(colors.Count - start, rowsPerPacket * width);
-            IReadOnlyList<Hsbk> chunk = take > 0 ? colors.Skip(start).Take(take).ToArray() : [];
-            byte[] header = Header(LifxConstants.Set64, target);
-            byte[] packet = new byte[header.Length + 10 + (LifxConstants.Set64ColorsPerPacket * 8)];
-            header.CopyTo(packet, 0);
-            int o = header.Length;
-            packet[o] = (byte)tileIndex;
-            packet[o + 1] = 1;
-            packet[o + 2] = 0;
-            packet[o + 3] = 0;
-            packet[o + 4] = (byte)y;
-            packet[o + 5] = (byte)width;
-            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(o + 6, 4), (uint)durationMs);
-            PackHsbk(packet.AsSpan(o + 10), chunk, LifxConstants.Set64ColorsPerPacket);
-            packets.Add(Finalise(packet));
+            for (int x = 0; x < width; x += xStep)
+            {
+                int cols = Math.Min(xStep, width - x);
+                int rows = Math.Min(rowsPerPacket, height - y);
+                var chunk = new List<Hsbk>(rows * cols);
+                for (int row = 0; row < rows; row++)
+                {
+                    int start = ((y + row) * width) + x;
+                    if (start >= colors.Count)
+                    {
+                        break;
+                    }
+
+                    int take = Math.Min(cols, colors.Count - start);
+                    take = Math.Min(take, LifxConstants.Set64ColorsPerPacket - chunk.Count);
+                    for (int i = 0; i < take; i++)
+                    {
+                        chunk.Add(colors[start + i]);
+                    }
+                }
+
+                if (chunk.Count == 0)
+                {
+                    continue;
+                }
+
+                byte[] header = Header(LifxConstants.Set64, target);
+                byte[] packet = new byte[header.Length + 10 + (LifxConstants.Set64ColorsPerPacket * 8)];
+                header.CopyTo(packet, 0);
+                int o = header.Length;
+                packet[o] = (byte)tileIndex;
+                packet[o + 1] = 1;
+                packet[o + 2] = 0;
+                packet[o + 3] = (byte)x;
+                packet[o + 4] = (byte)y;
+                packet[o + 5] = (byte)cols;
+                BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(o + 6, 4), (uint)durationMs);
+                PackHsbk(packet.AsSpan(o + 10), chunk, LifxConstants.Set64ColorsPerPacket);
+                packets.Add(Finalise(packet));
+            }
         }
 
         return packets;
@@ -287,8 +312,15 @@ public sealed class LifxPackets
         light.ZoneCount = zoneCount;
     }
 
-    public static ushort ReadMessageType(ReadOnlySpan<byte> packet) =>
-        BinaryPrimitives.ReadUInt16LittleEndian(packet.Slice(32, 2));
+    public static ushort ReadMessageType(ReadOnlySpan<byte> packet)
+    {
+        if (packet.Length < 34)
+        {
+            throw new ArgumentException("LIFX packet is too short to contain a message type.", nameof(packet));
+        }
+
+        return BinaryPrimitives.ReadUInt16LittleEndian(packet.Slice(32, 2));
+    }
 
     private IReadOnlyList<byte[]> BuildMatrixPackets(LifxLight light, IReadOnlyList<Hsbk> colors, int durationMs)
     {

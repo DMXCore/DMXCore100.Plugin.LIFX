@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 
 namespace DMXCore100.LIFX;
 
@@ -18,23 +19,28 @@ public sealed class LifxLanClient : ILifxLanClient
     private readonly CancellationTokenSource listenCts = new();
     private readonly Task listenTask;
     private readonly uint source;
-    private byte sequence;
-    private bool disposed;
+    private readonly Lock sendGate = new();
+    private readonly Action<Exception>? onListenFailure;
+    private int sequence;
+    private int disposed;
 
-    public LifxLanClient(string bindIp = "0.0.0.0")
+    public LifxLanClient(string bindIp = "0.0.0.0", Action<Exception>? onListenFailure = null)
     {
         this.source = (uint)Random.Shared.Next(2, int.MaxValue);
-        this.sequence = (byte)Random.Shared.Next(0, 256);
+        this.sequence = Random.Shared.Next(0, 256);
         this.packets = new LifxPackets(this.source, NextSequence);
+        this.onListenFailure = onListenFailure;
 
         IPAddress address = string.IsNullOrWhiteSpace(bindIp) || bindIp == "0.0.0.0"
             ? IPAddress.Any
             : IPAddress.Parse(bindIp);
+        var endpoint = new IPEndPoint(address, 0);
 
-        this.udp = new UdpClient(new IPEndPoint(address, 0));
+        this.udp = new UdpClient(endpoint.AddressFamily);
         this.udp.EnableBroadcast = true;
         this.udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
         this.udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        this.udp.Client.Bind(endpoint);
 
         this.listenTask = ListenAsync(this.listenCts.Token);
     }
@@ -150,12 +156,11 @@ public sealed class LifxLanClient : ILifxLanClient
 
     public async ValueTask DisposeAsync()
     {
-        if (this.disposed)
+        if (Interlocked.Exchange(ref this.disposed, 1) != 0)
         {
             return;
         }
 
-        this.disposed = true;
         await this.listenCts.CancelAsync();
         this.udp.Dispose();
         try
@@ -163,6 +168,9 @@ public sealed class LifxLanClient : ILifxLanClient
             await this.listenTask;
         }
         catch (OperationCanceledException)
+        {
+        }
+        catch (SocketException)
         {
         }
 
@@ -208,7 +216,10 @@ public sealed class LifxLanClient : ILifxLanClient
 
     private void Send(byte[] packet, IPAddress ip)
     {
-        this.udp.Send(packet, packet.Length, new IPEndPoint(ip, LifxConstants.Port));
+        lock (this.sendGate)
+        {
+            this.udp.Send(packet, packet.Length, new IPEndPoint(ip, LifxConstants.Port));
+        }
     }
 
     private async Task ListenAsync(CancellationToken cancellationToken)
@@ -228,9 +239,23 @@ public sealed class LifxLanClient : ILifxLanClient
             {
                 break;
             }
-            catch (SocketException)
+            catch (SocketException ex) when (IsRecoverable(ex.SocketErrorCode))
             {
+                try
+                {
+                    await Task.Delay(50, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
                 continue;
+            }
+            catch (SocketException ex)
+            {
+                this.onListenFailure?.Invoke(ex);
+                break;
             }
 
             HandlePacket(result.Buffer, result.RemoteEndPoint.Address.ToString());
@@ -274,7 +299,8 @@ public sealed class LifxLanClient : ILifxLanClient
             case LifxConstants.StateService:
                 break;
             case LifxConstants.StateLabel when data.Length >= LifxConstants.HeaderSize:
-                light.Label = Encoding.UTF8.GetString(data.AsSpan(LifxConstants.HeaderSize)).TrimEnd('\0');
+                int labelLength = Math.Min(32, data.Length - LifxConstants.HeaderSize);
+                light.Label = Encoding.UTF8.GetString(data.AsSpan(LifxConstants.HeaderSize, labelLength)).TrimEnd('\0');
                 break;
             case LifxConstants.StatePower when data.Length >= LifxConstants.HeaderSize + 2:
                 light.Power = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(LifxConstants.HeaderSize, 2));
@@ -290,11 +316,11 @@ public sealed class LifxLanClient : ILifxLanClient
                 light.ModelName = LifxProducts.ModelName((int)light.Vendor, (int)light.Product);
                 light.IsLight = !LifxProducts.IsSwitch((int)light.Product, light.ModelName);
                 break;
-            case LifxConstants.StateLight when data.Length >= 45:
-                light.CurrentHue = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(37, 2));
-                light.CurrentSaturation = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(39, 2));
-                light.CurrentBrightness = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(41, 2));
-                light.CurrentKelvin = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(43, 2));
+            case LifxConstants.StateLight when data.Length >= LifxConstants.HeaderSize + 8:
+                light.CurrentHue = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(LifxConstants.HeaderSize, 2));
+                light.CurrentSaturation = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(LifxConstants.HeaderSize + 2, 2));
+                light.CurrentBrightness = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(LifxConstants.HeaderSize + 4, 2));
+                light.CurrentKelvin = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(LifxConstants.HeaderSize + 6, 2));
                 light.CurrentRgb = LifxColor.HsbkToRgb8(new Hsbk(
                     light.CurrentHue, light.CurrentSaturation, light.CurrentBrightness, light.CurrentKelvin));
                 break;
@@ -311,14 +337,18 @@ public sealed class LifxLanClient : ILifxLanClient
         }
     }
 
-    private byte NextSequence()
-    {
-        this.sequence++;
-        return this.sequence;
-    }
+    private byte NextSequence() => (byte)Interlocked.Increment(ref this.sequence);
 
-    private static InvalidOperationException Unexpected(LifxLayout layout)
-    {
-        throw new InvalidOperationException($"Unhandled layout {layout}");
-    }
+    private static bool IsRecoverable(SocketError error) => error is
+        SocketError.ConnectionReset
+        or SocketError.ConnectionAborted
+        or SocketError.TimedOut
+        or SocketError.Interrupted
+        or SocketError.WouldBlock
+        or SocketError.TryAgain
+        or SocketError.NetworkReset
+        or SocketError.MessageSize;
+
+    private static InvalidOperationException Unexpected(LifxLayout layout) =>
+        new($"Unhandled layout {layout}");
 }

@@ -11,4 +11,6 @@ public abstract record LifxCommand
     public sealed record Power(string Target, bool On) : LifxCommand;
 
     public sealed record Effect(string Target, LifxEffectKind Kind, int? SpeedMs) : LifxCommand;
+
+    public sealed record Identify : LifxCommand;
 }

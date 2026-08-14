@@ -6,6 +6,11 @@ $root = $PSScriptRoot
 $publishDir = Join-Path $root 'artifacts/publish'
 $output = Join-Path $root 'artifacts/lifx-plugin.dmxplugin'
 
+if (Test-Path $publishDir)
+{
+    Remove-Item $publishDir -Recurse -Force
+}
+
 dotnet publish (Join-Path $root 'src/DMXCore100.LIFX') --configuration Release --output $publishDir
 
 if (Test-Path $output)

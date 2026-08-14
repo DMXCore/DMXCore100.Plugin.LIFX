@@ -61,6 +61,8 @@ public class LifxColorTests
 
         Hsbk custom = LifxColor.RgbToHsbk(0.5, 0.5, 0.5, kelvin: 5000);
         Assert.AreEqual(5000, custom.Kelvin);
+        Assert.AreEqual(LifxConstants.KelvinMin, LifxColor.RgbToHsbk(1, 1, 1, kelvin: 1).Kelvin);
+        Assert.AreEqual(LifxConstants.KelvinMax, LifxColor.RgbToHsbk(1, 1, 1, kelvin: 20000).Kelvin);
         Assert.AreEqual(0, custom.Saturation);
         Assert.IsTrue(custom.Brightness is > 30000 and < 35000);
     }

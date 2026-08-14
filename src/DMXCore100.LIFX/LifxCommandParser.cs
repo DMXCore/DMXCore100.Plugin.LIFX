@@ -71,11 +71,22 @@ public static class LifxCommandParser
                         ReadOptionalInt(root, "fade_ms"));
                     return true;
                 case "power":
-                    command = new LifxCommand.Power(target, ReadOn(root));
+                    if (!TryReadOn(root, out bool on, out error))
+                    {
+                        return false;
+                    }
+
+                    command = new LifxCommand.Power(target, on);
                     return true;
                 case "effect":
                     string name = ReadString(root, "name") ?? ReadString(root, "effect") ?? "stop";
                     command = new LifxCommand.Effect(target, ParseEffectName(name), ReadOptionalInt(root, "speed_ms"));
+                    return true;
+                case "identify":
+                    command = new LifxCommand.Identify();
+                    return true;
+                case "white":
+                    command = new LifxCommand.Color(target, 255, 255, 255, ReadBrightness(root), ReadOptionalInt(root, "fade_ms"));
                     return true;
                 default:
                     error = $"unknown cmd '{cmd}'";
@@ -118,7 +129,7 @@ public static class LifxCommandParser
                         ParseByte(parts[3]),
                         ParseByte(parts[4]),
                         parts.Length > 5 ? ParseBrightness(parts[5]) : 1.0,
-                        parts.Length > 6 ? int.Parse(parts[6], CultureInfo.InvariantCulture) : null);
+                        parts.Length > 6 ? Math.Max(0, int.Parse(parts[6], CultureInfo.InvariantCulture)) : null);
                     return true;
                 case "power":
                     if (parts.Length < 3)
@@ -139,7 +150,19 @@ public static class LifxCommandParser
                     command = new LifxCommand.Effect(
                         parts[1],
                         ParseEffectName(parts[2]),
-                        parts.Length > 3 ? int.Parse(parts[3], CultureInfo.InvariantCulture) : null);
+                        parts.Length > 3 ? Math.Max(0, int.Parse(parts[3], CultureInfo.InvariantCulture)) : null);
+                    return true;
+                case "identify":
+                    command = new LifxCommand.Identify();
+                    return true;
+                case "white":
+                    command = new LifxCommand.Color(
+                        parts.Length > 1 ? parts[1] : "all",
+                        255,
+                        255,
+                        255,
+                        parts.Length > 2 ? ParseBrightness(parts[2]) : 1.0,
+                        null);
                     return true;
                 default:
                     error = $"unknown command '{parts[0]}'";
@@ -176,7 +199,7 @@ public static class LifxCommandParser
             return 1.0;
         }
 
-        return ParseBrightness(value.GetDouble().ToString(CultureInfo.InvariantCulture));
+        return ParseBrightness(value.GetDouble());
     }
 
     private static int? ReadOptionalInt(JsonElement root, string name)
@@ -186,24 +209,35 @@ public static class LifxCommandParser
             return null;
         }
 
-        return value.GetInt32();
+        return Math.Max(0, value.GetInt32());
     }
 
-    private static bool ReadOn(JsonElement root)
+    private static bool TryReadOn(JsonElement root, out bool on, out string? error)
     {
+        on = false;
+        error = null;
         if (root.TryGetProperty("on", out JsonElement value))
         {
-            return value.ValueKind switch
+            on = value.ValueKind switch
             {
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
                 JsonValueKind.String => ParseOn(value.GetString() ?? ""),
                 _ => value.GetInt32() != 0,
             };
+            return true;
         }
 
-        string? power = ReadString(root, "power");
-        return power != null && ParseOn(power);
+        if (root.TryGetProperty("power", out JsonElement power))
+        {
+            on = power.ValueKind == JsonValueKind.String
+                ? ParseOn(power.GetString() ?? "")
+                : ParseOn(power.ToString());
+            return true;
+        }
+
+        error = "power command requires on or power";
+        return false;
     }
 
     private static int ParseByte(string text)
@@ -212,16 +246,10 @@ public static class LifxCommandParser
         return Math.Clamp(value, 0, 255);
     }
 
-    private static double ParseBrightness(string text)
-    {
-        double value = double.Parse(text, CultureInfo.InvariantCulture);
-        if (value > 1.0)
-        {
-            value /= 100.0;
-        }
+    private static double ParseBrightness(string text) =>
+        ParseBrightness(double.Parse(text, CultureInfo.InvariantCulture));
 
-        return LifxColor.Clamp01(value);
-    }
+    private static double ParseBrightness(double value) => LifxColor.NormaliseBrightness(value);
 
     private static bool ParseOn(string text) => text.Trim().ToLowerInvariant() switch
     {

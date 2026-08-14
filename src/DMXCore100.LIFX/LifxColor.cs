@@ -37,7 +37,17 @@ public static class LifxColor
             (ushort)((int)(h * 65535) & 0xFFFF),
             (ushort)((int)(s * 65535) & 0xFFFF),
             (ushort)((int)(v * 65535) & 0xFFFF),
-            (ushort)(kelvin & 0xFFFF));
+            (ushort)Math.Clamp(kelvin, LifxConstants.KelvinMin, LifxConstants.KelvinMax));
+    }
+
+    public static double NormaliseBrightness(double value)
+    {
+        if (value > 1.0)
+        {
+            value /= 100.0;
+        }
+
+        return Clamp01(value);
     }
 
     public static Hsbk ScaleBrightness(Hsbk color, double brightness)

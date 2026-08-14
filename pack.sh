@@ -7,6 +7,8 @@ root="$(cd "$(dirname "$0")" && pwd)"
 publish_dir="$root/artifacts/publish"
 output="$root/artifacts/lifx-plugin.dmxplugin"
 
+rm -rf "$publish_dir"
+
 dotnet publish "$root/src/DMXCore100.LIFX" --configuration Release --output "$publish_dir"
 
 rm -f "$output"

@@ -14,14 +14,18 @@ public sealed class LifxEffectRunner : IDisposable
     ];
 
     private readonly ILifxLanClient client;
+    private readonly Action<Exception>? onTickFailure;
     private readonly Dictionary<string, EffectState> running = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> lastTickFailure = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock gate = new();
     private CancellationTokenSource? loopCts;
     private Task? loopTask;
+    private bool disposed;
 
-    public LifxEffectRunner(ILifxLanClient client)
+    public LifxEffectRunner(ILifxLanClient client, Action<Exception>? onTickFailure = null)
     {
         this.client = client;
+        this.onTickFailure = onTickFailure;
     }
 
     public LifxEffectKind Current(string lightId)
@@ -42,6 +46,11 @@ public sealed class LifxEffectRunner : IDisposable
 
         lock (this.gate)
         {
+            if (this.disposed)
+            {
+                return;
+            }
+
             foreach (LifxLight light in lights)
             {
                 this.running[light.Id] = new EffectState(light, kind, Math.Max(80, speedMs), brightness, fadeMs);
@@ -55,6 +64,11 @@ public sealed class LifxEffectRunner : IDisposable
     {
         lock (this.gate)
         {
+            if (this.disposed)
+            {
+                return;
+            }
+
             if (lights == null)
             {
                 this.running.Clear();
@@ -76,8 +90,31 @@ public sealed class LifxEffectRunner : IDisposable
 
     public void Dispose()
     {
-        Stop();
-        this.loopCts?.Dispose();
+        lock (this.gate)
+        {
+            if (this.disposed)
+            {
+                return;
+            }
+
+            this.disposed = true;
+            this.running.Clear();
+            this.loopCts?.Cancel();
+        }
+
+        try
+        {
+            this.loopTask?.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException)
+        {
+        }
+
+        lock (this.gate)
+        {
+            this.loopCts?.Dispose();
+            this.loopCts = null;
+        }
     }
 
     internal static (double R, double G, double B) SinewaveRgb(double phase)
@@ -104,13 +141,18 @@ public sealed class LifxEffectRunner : IDisposable
     {
         int n = Math.Max(1, count);
         var zones = new Rgb01[n];
-        zones[index % n] = new Rgb01(r, g, b);
+        zones[PositiveMod(index, n)] = new Rgb01(r, g, b);
         return zones;
     }
 
     private void EnsureLoop()
     {
-        if (this.loopTask is { IsCompleted: false })
+        if (this.disposed)
+        {
+            return;
+        }
+
+        if (this.loopTask is { IsCompleted: false } && this.loopCts is { IsCancellationRequested: false })
         {
             return;
         }
@@ -138,7 +180,21 @@ public sealed class LifxEffectRunner : IDisposable
             DateTime now = DateTime.UtcNow;
             foreach (EffectState state in snapshot)
             {
-                Tick(state, now);
+                try
+                {
+                    Tick(state, now);
+                    lock (this.gate)
+                    {
+                        this.lastTickFailure.Remove(state.Light.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (ShouldNotifyTickFailure(state.Light.Id, now))
+                    {
+                        this.onTickFailure?.Invoke(ex);
+                    }
+                }
             }
 
             try
@@ -164,19 +220,18 @@ public sealed class LifxEffectRunner : IDisposable
                     return;
                 }
 
-                (double cr, double cg, double cb) = ChaseColors[state.Step % ChaseColors.Length];
+                (double cr, double cg, double cb) = ChaseColors[PositiveMod(state.Step, ChaseColors.Length)];
                 this.client.SetRgb(state.Light, cr, cg, cb, LifxConstants.DefaultKelvin, 0, state.Brightness);
                 state.Step++;
                 state.LastSent = now;
                 break;
             case LifxEffectKind.Sinewave:
+                state.Phase = WrapPhase(state.Phase + (2 * Math.PI / state.SpeedMs));
                 if (now - state.LastSent < TimeSpan.FromMilliseconds(state.SpeedMs))
                 {
-                    state.Phase += (2 * Math.PI) * 80.0 / (state.SpeedMs * 80.0);
                     return;
                 }
 
-                state.Phase += (2 * Math.PI) * 80.0 / (state.SpeedMs * 80.0);
                 (double sr, double sg, double sb) = SinewaveRgb(state.Phase);
                 this.client.SetRgb(state.Light, sr, sg, sb, LifxConstants.DefaultKelvin, state.SpeedMs, state.Brightness);
                 state.LastSent = now;
@@ -193,7 +248,7 @@ public sealed class LifxEffectRunner : IDisposable
                 }
                 else
                 {
-                    LifxColor.HsvToRgb((state.Step % 360) / 360.0, 1.0, 1.0, out double rr, out double rg, out double rb);
+                    LifxColor.HsvToRgb(PositiveMod(state.Step, 360) / 360.0, 1.0, 1.0, out double rr, out double rg, out double rb);
                     this.client.SetRgb(state.Light, rr, rg, rb, LifxConstants.DefaultKelvin, state.FadeMs, state.Brightness);
                     state.Step += 8;
                 }
@@ -250,5 +305,32 @@ public sealed class LifxEffectRunner : IDisposable
         public double Phase { get; set; }
 
         public DateTime LastSent { get; set; } = DateTime.MinValue;
+    }
+
+    private bool ShouldNotifyTickFailure(string lightId, DateTime now)
+    {
+        lock (this.gate)
+        {
+            if (this.lastTickFailure.TryGetValue(lightId, out DateTime last) && now - last < TimeSpan.FromSeconds(5))
+            {
+                return false;
+            }
+
+            this.lastTickFailure[lightId] = now;
+            return true;
+        }
+    }
+
+    private static int PositiveMod(int value, int modulus)
+    {
+        int remainder = value % modulus;
+        return remainder < 0 ? remainder + modulus : remainder;
+    }
+
+    private static double WrapPhase(double phase)
+    {
+        double cycle = 2 * Math.PI;
+        phase %= cycle;
+        return phase < 0 ? phase + cycle : phase;
     }
 }

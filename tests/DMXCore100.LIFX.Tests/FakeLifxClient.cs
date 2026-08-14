@@ -2,33 +2,160 @@ namespace DMXCore100.LIFX.Tests;
 
 internal sealed class FakeLifxClient : ILifxLanClient
 {
-    public List<LifxLight> Lights { get; } = [];
+    private readonly Lock gate = new();
+    private readonly List<LifxLight> lights = [];
+    private readonly List<ColorCall> colors = [];
+    private readonly List<ZoneCall> zones = [];
+    private readonly List<(string Id, bool On)> powers = [];
+    private readonly List<string> probes = [];
+    private int discoverCalls;
 
-    public List<ColorCall> Colors { get; } = [];
+    public IReadOnlyList<LifxLight> Lights
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.lights.ToArray();
+            }
+        }
+    }
 
-    public List<ZoneCall> Zones { get; } = [];
+    public IReadOnlyList<ColorCall> Colors
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.colors.ToArray();
+            }
+        }
+    }
 
-    public List<(string Id, bool On)> Powers { get; } = [];
+    public IReadOnlyList<ZoneCall> Zones
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.zones.ToArray();
+            }
+        }
+    }
 
-    public int DiscoverCalls { get; private set; }
+    public IReadOnlyList<(string Id, bool On)> Powers
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.powers.ToArray();
+            }
+        }
+    }
 
-    public List<string> Probes { get; } = [];
+    public int DiscoverCalls
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.discoverCalls;
+            }
+        }
+    }
 
-    public IReadOnlyList<LifxLight> GetLights() => Lights.ToArray();
+    public IReadOnlyList<string> Probes
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.probes.ToArray();
+            }
+        }
+    }
+
+    public void AddLight(LifxLight light)
+    {
+        lock (this.gate)
+        {
+            this.lights.Add(light);
+        }
+    }
+
+    public void Reset()
+    {
+        lock (this.gate)
+        {
+            this.colors.Clear();
+            this.zones.Clear();
+            this.powers.Clear();
+            this.probes.Clear();
+            this.discoverCalls = 0;
+        }
+    }
+
+    public IReadOnlyList<LifxLight> GetLights()
+    {
+        lock (this.gate)
+        {
+            return this.lights.ToArray();
+        }
+    }
 
     public Task<IReadOnlyList<LifxLight>> DiscoverAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        DiscoverCalls++;
-        return Task.FromResult(GetLights());
+        lock (this.gate)
+        {
+            this.discoverCalls++;
+            return Task.FromResult<IReadOnlyList<LifxLight>>(this.lights.ToArray());
+        }
     }
 
     public Task ProbeAsync(string ip, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        Probes.Add(ip);
+        lock (this.gate)
+        {
+            this.probes.Add(ip);
+        }
+
         return Task.CompletedTask;
     }
 
     public void SetRgb(LifxLight light, double r, double g, double b, int kelvin, int durationMs, double brightness)
+    {
+        lock (this.gate)
+        {
+            ApplyColor(light, r, g, b, kelvin, brightness);
+            this.colors.Add(new ColorCall(light.Id, r, g, b, kelvin, durationMs, brightness));
+        }
+    }
+
+    public void SetZones(LifxLight light, IReadOnlyList<Rgb01> zones, int kelvin, int durationMs, double brightness)
+    {
+        lock (this.gate)
+        {
+            this.zones.Add(new ZoneCall(light.Id, zones.Count, kelvin, durationMs, brightness));
+            if (zones.Count > 0)
+            {
+                ApplyColor(light, zones[0].R, zones[0].G, zones[0].B, kelvin, brightness);
+            }
+        }
+    }
+
+    public void SetPower(LifxLight light, bool on)
+    {
+        lock (this.gate)
+        {
+            light.Power = on ? 65535 : 0;
+            this.powers.Add((light.Id, on));
+        }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    private static void ApplyColor(LifxLight light, double r, double g, double b, int kelvin, double brightness)
     {
         Hsbk color = LifxColor.ScaleBrightness(LifxColor.RgbToHsbk(r, g, b, kelvin, light.CurrentHue), brightness);
         light.CurrentHue = color.Hue;
@@ -37,25 +164,7 @@ internal sealed class FakeLifxClient : ILifxLanClient
         light.CurrentKelvin = color.Kelvin;
         light.CurrentRgb = LifxColor.HsbkToRgb8(color);
         light.Power = 65535;
-        Colors.Add(new ColorCall(light.Id, r, g, b, kelvin, durationMs, brightness));
     }
-
-    public void SetZones(LifxLight light, IReadOnlyList<Rgb01> zones, int kelvin, int durationMs, double brightness)
-    {
-        Zones.Add(new ZoneCall(light.Id, zones.Count, kelvin, durationMs, brightness));
-        if (zones.Count > 0)
-        {
-            SetRgb(light, zones[0].R, zones[0].G, zones[0].B, kelvin, durationMs, brightness);
-        }
-    }
-
-    public void SetPower(LifxLight light, bool on)
-    {
-        light.Power = on ? 65535 : 0;
-        Powers.Add((light.Id, on));
-    }
-
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     internal readonly record struct ColorCall(string Id, double R, double G, double B, int Kelvin, int DurationMs, double Brightness);
 

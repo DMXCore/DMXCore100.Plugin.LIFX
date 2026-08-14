@@ -10,14 +10,16 @@ public sealed class LifxLight
             throw new ArgumentException("LIFX target must be 8 bytes.", nameof(target));
         }
 
-        Target = [.. target];
+        this.target = [.. target];
         Ip = ip;
         Label = label;
     }
 
-    public byte[] Target { get; }
+    private readonly byte[] target;
 
-    public string Id => Convert.ToHexString(Target).ToLowerInvariant();
+    public byte[] Target => [.. this.target];
+
+    public string Id => Convert.ToHexString(this.target).ToLowerInvariant();
 
     public string Ip { get; set; }
 
