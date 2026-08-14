@@ -4,11 +4,6 @@ Drives **LIFX** WiFi color bulbs and SuperColour / pixel fixtures from DMX
 channel data over the [LIFX LAN protocol](https://lan.developer.lifx.com/).
 No cloud account — UDP on the local network only, device port **56700**.
 
-This is an **output plugin**, the same shape as the
-[Shelly plugin](https://github.com/DMXCore/DMXCore100.ShellyPlugin). See
-[Designing a LIFX Output Plugin](https://github.com/DMXCore/DMXCore100.ExamplePlugin/blob/main/docs/lifx-plugin-design.md)
-for the host-side contract this follows.
-
 ## Setup
 
 Lights and the DMX Core must be on the same LAN (or have UDP 56700 routed
