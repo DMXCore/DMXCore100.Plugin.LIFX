@@ -1,28 +1,14 @@
-using System.Globalization;
 using DMXCore.PluginSdk;
 using DMXCore.PluginSdk.Testing;
 using DMXCore100.LIFX;
 
 // Interactive harness: F5 this project to talk to real LIFX lights on the
-// LAN through the plugin, without a DMX Core 100 device. MQTT commands are
-// simulated in-process; UDP discovery and SET_COLOR go out on the network.
-// Use `r` to recycle Initialize/Shutdown in-process — the host cannot unload
-// plugin assemblies, so this is the practical restart.
+// LAN through the output protocol, without a DMX Core 100 device. Use `r`
+// to recycle Initialize/Shutdown in-process — the host cannot unload plugin
+// assemblies, so this is the practical restart.
 
 LifxPlugin plugin = new();
 var host = new TestPluginHost(plugin.Info);
-host.EntityCatalog.Add(new PluginEntity
-{
-    Code = "system.masterdimmer",
-    Name = "Master Dimmer",
-    Kind = PluginEntityKind.Level,
-});
-host.EntityCatalog.Add(new PluginEntity
-{
-    Code = "fixture.HOUSE",
-    Name = "House LIFX",
-    Kind = PluginEntityKind.Level,
-});
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, args) =>
 {
@@ -60,116 +46,131 @@ try
 
         try
         {
-            string[] parts = input.Split(' ', 2);
-            string serial = host.DeviceInfo.Serial.ToLowerInvariant();
+            string[] parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+            {
+                continue;
+            }
 
             switch (parts[0].ToLowerInvariant())
             {
                 case "discover":
                 case "m":
-                    await host.SimulateMqttMessageAsync(
-                        LifxStatus.CommandTopic(serial),
-                        parts.Length > 1 ? parts[1] : "discover");
+                    IReadOnlyList<PluginOutputDestinationOption>? options =
+                        await host.OutputProtocols[LifxPlugin.ColorProtocolId].Protocol
+                            .GetDestinationOptionsAsync(refresh: true, cts.Token);
+                    IReadOnlyList<PluginOutputDestinationOption>? pixels =
+                        await host.OutputProtocols[LifxPlugin.PixelProtocolId].Protocol
+                            .GetDestinationOptionsAsync(refresh: false, cts.Token);
+                    if (options == null || options.Count == 0)
+                    {
+                        Console.WriteLine("  no lights found");
+                        break;
+                    }
+
+                    Console.WriteLine("  all:");
+                    foreach (PluginOutputDestinationOption option in options)
+                    {
+                        Console.WriteLine($"    {option.Value}  {option.Label}");
+                    }
+
+                    if (pixels is { Count: > 0 })
+                    {
+                        Console.WriteLine("  pixel:");
+                        foreach (PluginOutputDestinationOption option in pixels)
+                        {
+                            Console.WriteLine($"    {option.Value}  {option.Label}");
+                        }
+                    }
+
                     break;
 
+                case "send":
                 case "color":
                 case "colour":
-                case "power":
-                case "effect":
-                case "list":
-                case "identify":
-                case "white":
-                    await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(serial), input);
-                    break;
-
-                case "fixture":
-                    if (parts.Length < 2)
+                    if (parts.Length < 5
+                        || !byte.TryParse(parts[2], out byte red)
+                        || !byte.TryParse(parts[3], out byte green)
+                        || !byte.TryParse(parts[4], out byte blue))
                     {
-                        Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
+                        Console.WriteLine("usage: send <ip> <r> <g> <b>");
                         break;
                     }
 
-                    string[] fixtureParts = parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (fixtureParts.Length < 4
-                        || !int.TryParse(fixtureParts[1], out int fr)
-                        || !int.TryParse(fixtureParts[2], out int fg)
-                        || !int.TryParse(fixtureParts[3], out int fb))
+                    bool rgbOk = await host.SimulateOutputDeliveryAsync(
+                        LifxPlugin.ColorProtocolId,
+                        Mapping(parts[1]),
+                        [red, green, blue],
+                        cts.Token);
+                    Console.WriteLine(rgbOk ? "  sent" : "  send failed");
+                    break;
+
+                case "sendct":
+                    if (parts.Length < 6
+                        || !byte.TryParse(parts[2], out byte ctr)
+                        || !byte.TryParse(parts[3], out byte ctg)
+                        || !byte.TryParse(parts[4], out byte ctb)
+                        || !byte.TryParse(parts[5], out byte ct))
                     {
-                        Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
+                        Console.WriteLine("usage: sendct <ip> <r> <g> <b> <ct>");
                         break;
                     }
 
-                    double fixtureBrightness = 1.0;
-                    if (fixtureParts.Length > 4)
-                    {
-                        if (!double.TryParse(
-                            fixtureParts[4],
-                            NumberStyles.Float,
-                            CultureInfo.InvariantCulture,
-                            out fixtureBrightness)
-                            || !double.IsFinite(fixtureBrightness)
-                            || fixtureBrightness is < 0 or > 100)
-                        {
-                            Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
-                            break;
-                        }
-
-                        if (fixtureBrightness > 1.0)
-                        {
-                            fixtureBrightness /= 100.0;
-                        }
-
-                        if (!double.IsFinite(fixtureBrightness))
-                        {
-                            Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
-                            break;
-                        }
-
-                        fixtureBrightness = Math.Clamp(fixtureBrightness, 0.0, 1.0);
-                    }
-
-                    await host.SimulateEntityStateAsync(new DMXCore.PluginSdk.PluginEntityState
-                    {
-                        Code = "fixture." + fixtureParts[0],
-                        Text = $$"""{"r":{{fr}},"g":{{fg}},"b":{{fb}},"brightness":{{fixtureBrightness.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}""",
-                    });
+                    bool ctOk = await host.SimulateOutputDeliveryAsync(
+                        LifxPlugin.ColorCtProtocolId,
+                        Mapping(parts[1]),
+                        [ctr, ctg, ctb, ct],
+                        cts.Token);
+                    Console.WriteLine(ctOk ? "  sent" : "  send failed");
                     break;
 
-                case "cueend":
-                    await host.SimulateCueEndedAsync(parts.Length > 1 ? parts[1] : "TEST");
-                    break;
-
-                case "v":
-                    double dimmer = 0.5;
-                    if (parts.Length > 1)
+                case "sendpixel":
+                    if (parts.Length < 5
+                        || !byte.TryParse(parts[2], out byte pr)
+                        || !byte.TryParse(parts[3], out byte pg)
+                        || !byte.TryParse(parts[4], out byte pb))
                     {
-                        if (!double.TryParse(
-                            parts[1],
-                            NumberStyles.Float,
-                            CultureInfo.InvariantCulture,
-                            out dimmer)
-                            || !double.IsFinite(dimmer)
-                            || dimmer is < 0 or > 1)
-                        {
-                            Console.WriteLine("usage: v [level]");
-                            break;
-                        }
+                        Console.WriteLine("usage: sendpixel <ip> <r> <g> <b>");
+                        break;
                     }
 
-                    await host.SimulateEntityStateAsync(new PluginEntityState
+                    IPluginOutputProtocol pixelProtocol =
+                        host.OutputProtocols[LifxPlugin.PixelProtocolId].Protocol;
+                    _ = await pixelProtocol.GetDestinationOptionsAsync(refresh: true, cts.Token);
+                    int channels = pixelProtocol.GetChannelCount(Mapping(parts[1]));
+                    if (channels < 3)
                     {
-                        Code = "system.masterdimmer",
-                        Level = dimmer,
-                    });
+                        Console.WriteLine("  not a pixel device (run discover, or check the IP)");
+                        break;
+                    }
+
+                    byte[] dmx = new byte[channels];
+                    for (int i = 0; i < channels; i += 3)
+                    {
+                        dmx[i] = pr;
+                        dmx[i + 1] = pg;
+                        dmx[i + 2] = pb;
+                    }
+
+                    bool pixelOk = await host.SimulateOutputDeliveryAsync(
+                        LifxPlugin.PixelProtocolId,
+                        Mapping(parts[1]),
+                        dmx,
+                        cts.Token);
+                    Console.WriteLine(pixelOk ? $"  sent {channels / 3} px" : "  send failed");
                     break;
 
                 case "r":
+                {
                     LifxPlugin replacement = new();
                     await replacement.InitializeAsync(host, cts.Token);
-                    await plugin.ShutdownAsync(CancellationToken.None);
+                    using var reinitCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                    reinitCts.CancelAfter(TimeSpan.FromSeconds(5));
+                    await plugin.ShutdownAsync(reinitCts.Token);
                     plugin = replacement;
                     Console.WriteLine("  plugin re-initialized in-process (assemblies stay loaded)");
                     break;
+                }
 
                 case "i":
                     Console.WriteLine($"  device: {host.DeviceInfo.ProductName} '{host.DeviceInfo.DeviceName}'");
@@ -177,32 +178,10 @@ try
                     Console.WriteLine($"  version: {host.DeviceInfo.SoftwareVersion}");
                     break;
 
-                case "x":
-                    await host.SimulateMqttConnectionChangedAsync(!host.MqttConnected);
-                    Console.WriteLine($"  MQTT connected: {host.MqttConnected}");
-                    break;
-
-                case "s":
-                    string[] setting = input.Split(' ', 3);
-                    if (setting.Length < 3)
-                    {
-                        Console.WriteLine("usage: s <key> <value>");
-                        break;
-                    }
-
-                    host.SetSetting(setting[1], setting[2]);
-                    await host.TriggerSettingsChangedAsync();
-                    break;
-
                 case "d":
-                    Console.WriteLine($"  published: {host.PublishedMessages.Count}");
-                    Console.WriteLine($"  triggers:  {string.Join(", ", host.FiredTriggers.Distinct())}");
-                    var lights = host.PublishedMessages.LastOrDefault(x => x.Topic == LifxStatus.LightsTopic(serial));
-                    if (lights != default)
-                    {
-                        Console.WriteLine($"  lights:    {lights.Payload}");
-                    }
-
+                    Console.WriteLine($"  protocols: {string.Join(", ", host.OutputProtocols.Keys)}");
+                    Console.WriteLine($"  profiles:  {string.Join(", ", host.FixtureProfiles.Keys)}");
+                    Console.WriteLine($"  connected: {host.ConnectionState} {host.ConnectionDetail}");
                     break;
 
                 case "q":
@@ -215,11 +194,7 @@ try
                     break;
 
                 default:
-                    if (input.Length > 0)
-                    {
-                        Console.WriteLine("unknown command, ? for help");
-                    }
-
+                    Console.WriteLine("unknown command, ? for help");
                     break;
             }
         }
@@ -242,26 +217,25 @@ static async Task<string?> ReadLineAsync(CancellationToken cancellationToken)
     return await read.WaitAsync(cancellationToken);
 }
 
+static PluginOutputMappingConfig Mapping(string ip) =>
+    new()
+    {
+        DestinationAddress = ip,
+        ChannelOffset = 0,
+        UniverseId = 1,
+    };
+
 static void PrintHelp()
 {
     Console.WriteLine("""
-        Commands (sent as MQTT on dmxcore/{serial}/lifx/command):
-          discover                 broadcast-discover LIFX lights
-          list                     republish the discovered-light list
-          identify                 paint each light a different hue
-          white all                set RGB white
-          color all 255 0 0        set RGB (0-255), optional brightness + fade_ms
-          power all on|off
-          effect all chase         chase | sinewave | rainbow | pixel-chase | stop
-          fixture <code> r g b [br]  simulate Fixture Control follow
-          v [level]                simulate master dimmer (0-1, default 0.5)
-          cueend [code]            simulate a cue-ended event
-          m <payload>              raw command payload (text or JSON)
-          s <key> <value>          change a setting (discover-now true, light-1 true)
+        Commands (output protocol, same path as the Core's Outputs page):
+          discover                 broadcast-discover LIFX lights (pixel devices listed separately)
+          send <ip> r g b          LIFX_COLOR SetColor (0-255)
+          sendct <ip> r g b ct     LIFX_COLOR_CT, ct 0=warm 255=cool
+          sendpixel <ip> r g b     LIFX_PIXEL fill all zones (Tube / Beam / strip)
           r                        shutdown + initialize again (no assembly unload)
           i                        show device info
-          x                        toggle MQTT connection
-          d                        dump published messages / triggers
+          d                        dump registered protocols / profiles
           q                        quit
         """);
 }

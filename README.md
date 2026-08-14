@@ -1,172 +1,58 @@
 # DMX Core 100 — LIFX Plugin
 
-Discovers LIFX fixtures on the LAN and drives colour, power, and effects over
-the [LIFX LAN protocol](https://lan.developer.lifx.com/). No LIFX cloud
-account — UDP on the local network only.
+Drives **LIFX** WiFi color bulbs and SuperColour / pixel fixtures from DMX
+channel data over the [LIFX LAN protocol](https://lan.developer.lifx.com/).
+No cloud account — UDP on the local network only, device port **56700**.
 
-## User guide
-
-### What you get
-
-Once the plugin is running, LIFX lights on the same LAN can be discovered and
-tested from the plugin settings page, or driven from DMX Core cues, scripts,
-and MQTT.
-
-| Capability | What it does |
-|---|---|
-| Discovery | Finds bulbs, SuperColour tubes/Lunas, strips, and tiles; skips LIFX switches |
-| Colour | Sets RGB on a light or on `all`. Pixel fixtures get per-zone colour |
-| White | Shortcut for RGB 255,255,255 |
-| Effects | Chase, sinewave, rainbow, and pixel-chase, from settings or MQTT |
-| Power | Turns lights on or off |
-| Identify | Paints each light a different hue so you can match Light 1–12 |
-| Per-light test | Light 1–12 toggles send the test colour in scan order |
-| Follow fixture | Tracks a Fixture Control fixture’s RGB + intensity |
-| Master dimmer | Optional follow of `system.masterdimmer` |
-| Cue-end blackout | Optional power-off when a top-level cue finishes |
-| Trigger | Fires `LIFX-DISCOVERED` after a pass that found at least one light |
-
-Known IPs from the last discovery are stored in the plugin state blob and
-probed first on the next run.
-
-### Setup
+## Setup
 
 Lights and the DMX Core must be on the same LAN (or have UDP 56700 routed
-between them).
+between them). Give each bulb a **static DHCP lease** so the mapping's IP
+does not move.
 
-1. Web UI → **Settings → Remote Control**: enable the MQTT broker if you want
-   to send commands from scripts or another MQTT client.
-2. **Settings → Plugins**: enable **LIFX**. Open the LIFX plugin page.
+On the Core's **Outputs** page, add an output of type **LIFX**:
 
-On that page:
+1. **Protocol** — Color (3 ch RGB), Color + CT (4 ch RGB + color
+   temperature), or Pixel (RGB × discovered zones).
+2. **Destination Address** — the device IP. Use **Discover**, or type a
+   known address. Pixel devices show a zone count, e.g.
+   `Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)`.
+3. **Start Channel** — DMX start address of that device's channels.
 
-1. Toggle **Discover now** to scan the LAN (or leave **Discover on startup** on).
-2. Names from the last scan show on the plugin status line (the settings
-   form cannot rename its fields after load).
-3. Toggle **Identify lights** to paint each fixture a different colour, or
-   **Light 1** … **Light 12** / **Test all lights** to send the test colour.
-   Toggle off to turn those lights off.
-4. **Chase** / **Sinewave** run those effects on every discovered light.
-5. **Test red / green / blue** set the colour the test toggles send.
-6. Optionally turn on **Follow master dimmer** and **Blackout when a cue
-   ends**, and fill in **Follow fixture** with a Fixture Control code.
+In the fixture editor, patch bulbs with the plugin's **LIFX / Color Bulb**
+profile (personalities **RGB** or **RGB+CT**). Pixel mappings take
+`zones × 3` channels from discovery (SuperColour Tube is typically 52 or
+55 pixels). The Mapped Device selector prefills from an existing LIFX
+mapping. Presets, cues, effects, and Fixture Control then drive the device
+through the normal lighting pipeline.
 
-The UDP socket always binds all interfaces.
+The Core rate-limits each mapping to 20 updates/second and coalesces
+latest-wins. Color mappings convert RGB to LIFX HSBK and send `SetColor`
+with a 75 ms duration. Pixel mappings send `Set64` (Tube / Luna / tiles)
+or `SetExtendedColorZones` (Beam / strips).
 
-| Setting | Default | Purpose |
+Requires a Core whose plugin SDK contract is **1.3** or newer (output
+protocols, destination discovery, and plugin fixture profiles).
+
+| Protocol | Channels | Notes |
 |---|---|---|
-| Discover now | off | Rising edge scans the LAN |
-| Discover on startup | on | Broadcast-discover when the plugin starts |
-| Discovery timeout | 5 s | How long to wait for `GetService` replies |
-| Identify lights | off | Distinct hue per discovered light |
-| Test all lights | off | Send the test colour to every light; off powers them down |
-| Chase | off | RGB chase on every discovered light |
-| Sinewave | off | Hue sinewave on every discovered light |
-| Light 1 … Light 12 | off | Test colour for the *n*th light from the last scan |
-| Test red / green / blue | 255 / 80 / 0 | Colour used by the test toggles |
-| Follow master dimmer | off | Scale LIFX brightness with the DMX Core master |
-| Blackout when a cue ends | off | Power off when a top-level cue finishes |
-| Follow fixture | empty | Fixture Control code to track, see below |
-| Default fade | 45 ms | LIFX interpolation time for colour commands |
-| Default brightness | 100 % | Scales colour and effect output |
+| `LIFX_COLOR` | RGB | White is mixed in RGB; kelvin stays at 3500 K |
+| `LIFX_COLOR_CT` | RGB + ColorTemperature | CT 0 = 2500 K (warm), 255 = 9000 K (cool) |
+| `LIFX_PIXEL` | RGB × zones | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. Run Discover so zone geometry is cached. |
 
-### Follow fixture
+## Troubleshooting
 
-Patch a dummy RGB fixture in Lighting Setup (or pick an existing one) and
-put its code in **Follow fixture**. Every discovered LIFX light then tracks
-that fixture’s colour and intensity from Fixture Control, cues, presets,
-and scripts — including fades — instead of a static CueCode→look table.
-
-Intensity 0 powers the LIFX lights off. Identify, test toggles, chase, and
-sinewave on the plugin page take priority until you turn them off.
-
-The fixture must be visible to the plugin as entity `fixture.YOURCODE` (or
-the bare code) with `dmx.getFixture` levels (`red` / `green` / `blue` /
-`intensity`, 0–1).
-
-### Commands
-
-`serial` is the device hardware id, lowercase.
-
-```text
-dmxcore/{serial}/lifx/command          text or JSON commands
-dmxcore/{serial}/lifx/lights           retained discovered-light list
-dmxcore/{serial}/lifx/{lightId}/set    per-light colour / power / effect
-dmxcore/{serial}/lifx/{lightId}/state  retained colour + effect
-```
-
-Text on the command topic:
-
-```text
-discover
-list
-identify
-white all
-color all 255 0 0
-colour Kitchen 0 128 255 50 200
-power all on
-effect all chase
-effect all sinewave 400
-effect all rainbow
-effect Tube pixel-chase
-effect all stop
-```
-
-`color` / `colour` is `color <target> <r> <g> <b> [brightness] [fade_ms]`.
-Brightness is 0–1, or 0–100 if the value is greater than 1. Target is `all`,
-a light label, an IP, or the hex id from the lights list. `white` is
-`white [target] [brightness]`.
-
-JSON:
-
-```json
-{"cmd":"color","target":"all","r":255,"g":0,"b":0,"brightness":1,"fade_ms":45}
-{"cmd":"effect","target":"all","name":"chase","speed_ms":400}
-{"cmd":"power","target":"all","on":true}
-{"cmd":"identify"}
-{"cmd":"white","target":"all"}
-{"cmd":"list"}
-{"cmd":"discover"}
-```
-
-Per-light `.../set` also accepts `ON` / `OFF` and a bare effect name
-(`chase`, `sinewave`, `rainbow`, `pixel-chase`, `stop`).
-
-From a DMX Core script:
-
-```javascript
-const serial = "device-serial";
-dmx.mqtt.publish("dmxcore/" + serial + "/lifx/command", "color all 255 80 0");
-```
-
-Or map the **Lights discovered** plugin trigger (`LIFX-DISCOVERED`) in the
-normal trigger UI.
-
-### Ideas
-
-- **Show follow:** patch a dummy RGB fixture, put its code in **Follow
-  fixture**, and program that fixture in your cues / Fixture Control. Turn
-  on **Follow master dimmer** if house LIFX should also track the grand
-  master.
-- **Warm wash:** publish `color all 255 140 40` from a script.
-- **Pixel check:** `effect Tube rainbow` or `effect Tube pixel-chase` to
-  confirm SuperColour mapping without a console.
-- **Presence:** when the venue closes, `power all off`.
-
-### Troubleshooting
-
-- **No lights found:** confirm the fixtures are powered and on the same
-  subnet, then toggle **Discover now** again. The plugin listens on every
-  local interface.
-- **Commands do nothing:** the plugin needs at least one successful
-  discovery first. Check `dmxcore/{serial}/lifx/lights` for the current
-  list, and that MQTT is connected (Settings → Remote Control).
-- **Wrong light:** target by label, IP, or the hex `id` from the lights
-  payload — `all` hits every discovered fixture. Use **Identify lights**
-  to see which physical fixture is Light 1, 2, …
-- **Steppy colour:** raise **Default fade** (try 60 ms). Chase and
-  sinewave send on a timer; rainbow on a zone fixture paints every pixel
-  in one pass.
+- **No lights in Discover:** confirm the bulbs are powered and on the same
+  subnet, then press Discover again. The plugin broadcasts LIFX
+  `GetService` (not mDNS), then queries labels, product, and zone/tile
+  geometry for SuperColour / strips.
+- **Pixel mapping has 0 channels:** Discover on the Pixel protocol first so
+  zone count is cached. Give the fixture a static DHCP lease.
+- **Bulb does not follow cues:** check the mapping's IP, that the fixture
+  is patched to the LIFX profile, and that the output is enabled.
+- **Wrong bulb:** destination is the IP address. Re-run Discover after a
+  DHCP change, or set a static lease.
+- **Plugin will not load:** the device firmware must expose SDK 1.3+.
 
 ## Development
 
@@ -175,33 +61,26 @@ dotnet test tests/DMXCore100.LIFX.Tests
 ./pack.sh            # or pack.ps1 — produces artifacts/lifx-plugin.dmxplugin
 ```
 
+```powershell
+pwsh ./deploy-dev.ps1     # pack and upload to localhost:8080 (prompts for PIN)
+```
+
 Iterate with `tools/DMXCore100.LIFX.DevHost` (F5 in Visual Studio) and the
-unit tests — both use [`TestPluginHost`](https://www.nuget.org/packages/DMXCore.PluginSdk.Testing),
-the same tester as the [example plugin](https://github.com/DMXCore/DMXCore100.ExamplePlugin).
-The device loads plugins in-process and cannot unload .NET assemblies, so
-uploading a new `.dmxplugin` needs a full device restart. The DevHost
-recycles `Initialize` / `Shutdown` in the same process (`r`) and talks to
-real bulbs over the LAN.
+unit tests — both use [`TestPluginHost`](https://www.nuget.org/packages/DMXCore.PluginSdk.Testing).
+Core 2026.8+ hot-reloads an uploaded `.dmxplugin`; older firmware applies
+it on the next device restart.
 
 ```text
 discover
-identify
-white all
-color all 255 0 0
-effect all chase
-effect all stop
-cueend
-s follow-fixture HOUSE
-fixture HOUSE 255 140 40 80
-s follow-master true
-v 0.4                # master dimmer
+send 192.168.1.10 255 0 0
+sendct 192.168.1.10 255 180 80 0
+sendpixel 192.168.1.30 255 0 0
 r                    # shutdown + initialize again
-d                    # dump published lights / triggers
+d                    # dump registered protocols / profiles
 ```
 
 Every push to `main` recreates the rolling `latest` release carrying the
-packed `.dmxplugin`; the DMX Core 100 product build downloads it from there
-and bundles it as a built-in plugin.
+packed `.dmxplugin`.
 
 ## License
 

@@ -4,14 +4,6 @@ namespace DMXCore100.LIFX.Tests;
 public class LifxColorTests
 {
     [TestMethod]
-    public void Clamp01_Bounds()
-    {
-        Assert.AreEqual(0.0, LifxColor.Clamp01(-1.0));
-        Assert.AreEqual(1.0, LifxColor.Clamp01(2.0));
-        Assert.AreEqual(0.5, LifxColor.Clamp01(0.5));
-    }
-
-    [TestMethod]
     public void RgbToHsbk_PureColors()
     {
         Hsbk red = LifxColor.RgbToHsbk(1, 0, 0);
@@ -38,16 +30,6 @@ public class LifxColorTests
         Hsbk black = LifxColor.RgbToHsbk(0, 0, 0);
         Assert.AreEqual(0, black.Brightness);
         Assert.AreEqual(LifxConstants.DefaultKelvin, black.Kelvin);
-    }
-
-    [TestMethod]
-    public void RgbToHsbk_HoldHueWhenDim()
-    {
-        Hsbk blue = LifxColor.RgbToHsbk(0, 0, 1);
-        Hsbk held = LifxColor.RgbToHsbk(0, 0, 0, holdHue: blue.Hue);
-        Assert.AreEqual(blue.Hue, held.Hue);
-        Assert.AreEqual(0, held.Saturation);
-        Assert.AreEqual(0, held.Brightness);
     }
 
     [TestMethod]

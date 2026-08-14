@@ -4,3 +4,5 @@ artifacts/
 TestResults/
 .vs/
 *.user
+.DS_Store
+

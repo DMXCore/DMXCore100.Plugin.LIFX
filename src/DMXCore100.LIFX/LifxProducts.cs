@@ -1,10 +1,12 @@
 namespace DMXCore100.LIFX;
 
 /// <summary>
-/// LIFX LAN product IDs from https://github.com/LIFX/products.
-/// SuperColour Tube/Luna use consumer names; other entries match products.json.
+/// LIFX product names and pixel-family layout from
+/// https://github.com/LIFX/products. Switches are skipped — they are not
+/// lights. SuperColour Tube/Luna, Beam, strips, and tiles are matrix or
+/// linear so discovery can request zone geometry.
 /// </summary>
-public static class LifxProducts
+internal static class LifxProducts
 {
     private static readonly Dictionary<int, string> Names = new()
     {
@@ -197,12 +199,6 @@ public static class LifxProducts
         162, 203, 204, 205, 206, 207, 208, 211, 213, 214, 300,
     ];
 
-    private static readonly HashSet<int> ExtendedMultizoneIds =
-    [
-        56, 72, 117, 118, 119, 120, 141, 142, 143, 144, 151, 152, 161, 162,
-        203, 204, 205, 206, 207, 208, 211, 213, 214,
-    ];
-
     public static string ModelName(int vendor, int product)
     {
         if (vendor != 1)
@@ -222,8 +218,6 @@ public static class LifxProducts
 
         return !string.IsNullOrEmpty(modelName) && modelName.Contains("Switch", StringComparison.Ordinal);
     }
-
-    public static bool UsesExtendedMultizone(int product) => ExtendedMultizoneIds.Contains(product);
 
     public static LifxLayout Layout(int product)
     {
