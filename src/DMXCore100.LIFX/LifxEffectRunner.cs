@@ -112,8 +112,11 @@ public sealed class LifxEffectRunner : IDisposable
 
         lock (this.gate)
         {
-            this.loopCts?.Dispose();
-            this.loopCts = null;
+            if (this.loopTask is null or { IsCompleted: true })
+            {
+                this.loopCts?.Dispose();
+                this.loopCts = null;
+            }
         }
     }
 
@@ -157,9 +160,54 @@ public sealed class LifxEffectRunner : IDisposable
             return;
         }
 
+        if (this.loopTask is { IsCompleted: false })
+        {
+            _ = RestartAfterAsync(this.loopTask, this.loopCts);
+            return;
+        }
+
         this.loopCts?.Dispose();
         this.loopCts = new CancellationTokenSource();
         this.loopTask = Task.Run(() => RunLoop(this.loopCts.Token));
+    }
+
+    private async Task RestartAfterAsync(Task previousTask, CancellationTokenSource? previousCts)
+    {
+        try
+        {
+            await previousTask.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+        }
+
+        lock (this.gate)
+        {
+            if (ReferenceEquals(this.loopCts, previousCts))
+            {
+                this.loopCts = null;
+                if (ReferenceEquals(this.loopTask, previousTask))
+                {
+                    this.loopTask = null;
+                }
+            }
+
+            previousCts?.Dispose();
+
+            if (this.disposed || this.running.Count == 0)
+            {
+                return;
+            }
+
+            if (this.loopTask is { IsCompleted: false } && this.loopCts is { IsCancellationRequested: false })
+            {
+                return;
+            }
+
+            this.loopCts?.Dispose();
+            this.loopCts = new CancellationTokenSource();
+            this.loopTask = Task.Run(() => RunLoop(this.loopCts.Token));
+        }
     }
 
     private async Task RunLoop(CancellationToken cancellationToken)
@@ -261,13 +309,30 @@ public sealed class LifxEffectRunner : IDisposable
                     return;
                 }
 
-                int zones = Math.Max(1, state.Light.ZoneCount);
-                this.client.SetZones(
-                    state.Light,
-                    PixelChaseZones(zones, state.Step, 1.0, 1.0, 1.0),
-                    LifxConstants.DefaultKelvin,
-                    0,
-                    state.Brightness);
+                if (state.Light.ZoneCapable)
+                {
+                    int zones = Math.Max(1, state.Light.ZoneCount);
+                    this.client.SetZones(
+                        state.Light,
+                        PixelChaseZones(zones, state.Step, 1.0, 1.0, 1.0),
+                        LifxConstants.DefaultKelvin,
+                        0,
+                        state.Brightness);
+                }
+                else
+                {
+                    bool on = (state.Step & 1) == 0;
+                    double level = on ? 1.0 : 0.0;
+                    this.client.SetRgb(
+                        state.Light,
+                        level,
+                        level,
+                        level,
+                        LifxConstants.DefaultKelvin,
+                        0,
+                        state.Brightness);
+                }
+
                 state.Step++;
                 state.LastSent = now;
                 break;

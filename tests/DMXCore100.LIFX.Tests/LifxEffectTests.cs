@@ -23,6 +23,7 @@ public class LifxEffectTests
         Assert.AreEqual(4, zones.Count);
         Assert.AreEqual(1.0, zones[0].R, 1e-9);
         Assert.AreEqual(0.0, zones[0].G, 1e-9);
+        Assert.AreEqual(4, zones.Distinct().Count());
     }
 
     [TestMethod]

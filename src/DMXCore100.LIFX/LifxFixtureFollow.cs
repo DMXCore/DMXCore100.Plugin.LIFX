@@ -81,9 +81,12 @@ public static class LifxFixtureFollow
             return false;
         }
 
-        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int r)
-            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int g)
-            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int b))
+        if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double r)
+            || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double g)
+            || !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double b)
+            || !double.IsFinite(r)
+            || !double.IsFinite(g)
+            || !double.IsFinite(b))
         {
             return false;
         }
@@ -96,9 +99,9 @@ public static class LifxFixtureFollow
         }
 
         color = new LifxLook.Color(
-            Math.Clamp(r, 0, 255),
-            Math.Clamp(g, 0, 255),
-            Math.Clamp(b, 0, 255),
+            ToByte(r),
+            ToByte(g),
+            ToByte(b),
             LifxColor.NormaliseBrightness(brightness));
         return true;
     }

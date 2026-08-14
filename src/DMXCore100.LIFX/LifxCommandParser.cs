@@ -62,6 +62,14 @@ public static class LifxCommandParser
                     return true;
                 case "color":
                 case "colour":
+                    if (!root.TryGetProperty("r", out _)
+                        && !root.TryGetProperty("g", out _)
+                        && !root.TryGetProperty("b", out _))
+                    {
+                        error = "usage: color <target> <r> <g> <b> [brightness] [fade_ms]";
+                        return false;
+                    }
+
                     command = new LifxCommand.Color(
                         target,
                         ReadByte(root, "r"),

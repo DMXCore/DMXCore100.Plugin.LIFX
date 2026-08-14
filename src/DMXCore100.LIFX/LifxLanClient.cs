@@ -302,7 +302,19 @@ public sealed class LifxLanClient : ILifxLanClient
                 NotifyListenRecovered();
             }
 
-            HandlePacket(result.Buffer, result.RemoteEndPoint.Address.ToString());
+            try
+            {
+                HandlePacket(result.Buffer, result.RemoteEndPoint.Address.ToString());
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidOperationException
+                or IndexOutOfRangeException or ArgumentOutOfRangeException or DecoderFallbackException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Exchange(ref this.listenFailed, 1);
+                NotifyListenFailure(ex);
+            }
         }
     }
 
@@ -385,9 +397,14 @@ public sealed class LifxLanClient : ILifxLanClient
         {
             case LifxConstants.StateService:
                 break;
-            case LifxConstants.StateLabel when data.Length >= LifxConstants.HeaderSize:
+            case LifxConstants.StateLabel when data.Length > LifxConstants.HeaderSize:
                 int labelLength = Math.Min(32, data.Length - LifxConstants.HeaderSize);
-                light.Label = Encoding.UTF8.GetString(data.AsSpan(LifxConstants.HeaderSize, labelLength)).TrimEnd('\0');
+                string label = Encoding.UTF8.GetString(data.AsSpan(LifxConstants.HeaderSize, labelLength)).TrimEnd('\0');
+                if (!string.IsNullOrWhiteSpace(label))
+                {
+                    light.Label = label;
+                }
+
                 break;
             case LifxConstants.StatePower when data.Length >= LifxConstants.HeaderSize + 2:
                 light.Power = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(LifxConstants.HeaderSize, 2));

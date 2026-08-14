@@ -58,6 +58,9 @@ public class LifxPluginTests
         }
     }
 
+    private static string Serial(TestPluginHost host) =>
+        host.DeviceInfo.Serial.ToLowerInvariant();
+
     private static (string Topic, string Payload, bool Retain)? FindPublished(TestPluginHost host, string topic) =>
         host.PublishedMessages.Where(x => x.Topic == topic).Select(x => ((string, string, bool)?)x).LastOrDefault();
 
@@ -66,12 +69,12 @@ public class LifxPluginTests
     {
         var (_, host, client) = await CreateInitializedAsync();
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
 
         Assert.AreEqual(1, client.DiscoverCalls);
         Assert.AreEqual(LifxPlugin.DiscoveredTrigger, host.FiredTriggers.Single());
 
-        var message = FindPublished(host, LifxStatus.LightsTopic("test-serial"));
+        var message = FindPublished(host, LifxStatus.LightsTopic(Serial(host)));
         Assert.IsNotNull(message);
         Assert.IsTrue(message.Value.Retain);
         using var doc = JsonDocument.Parse(message.Value.Payload);
@@ -83,17 +86,17 @@ public class LifxPluginTests
     public async Task ColorCommand_SendsRgbAndPublishesState()
     {
         var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
         host.PublishedMessages.Clear();
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "color all 255 0 0");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "color all 255 0 0");
 
         Assert.AreEqual(1, client.Colors.Count);
         Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
         Assert.AreEqual(0.0, client.Colors[0].G, 1e-9);
         Assert.AreEqual(45, client.Colors[0].DurationMs);
 
-        var state = FindPublished(host, LifxStatus.LightStateTopic("test-serial", client.Lights[0].Id));
+        var state = FindPublished(host, LifxStatus.LightStateTopic(Serial(host), client.Lights[0].Id));
         Assert.IsNotNull(state);
         using var doc = JsonDocument.Parse(state.Value.Payload);
         Assert.AreEqual(255, doc.RootElement.GetProperty("r").GetInt32());
@@ -104,7 +107,7 @@ public class LifxPluginTests
     public async Task PowerCommand_TurnsLightOff()
     {
         var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "power Kitchen off");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "power Kitchen off");
 
         Assert.AreEqual((client.Lights[0].Id, false), client.Powers.Single());
         Assert.AreEqual(0, client.Lights[0].Power);
@@ -116,7 +119,7 @@ public class LifxPluginTests
         var (_, host, client) = await CreateInitializedAsync();
         string id = client.Lights[0].Id;
 
-        await host.SimulateMqttMessageAsync(LifxStatus.LightSetTopic("test-serial", id), "OFF");
+        await host.SimulateMqttMessageAsync(LifxStatus.LightSetTopic(Serial(host), id), "OFF");
 
         Assert.AreEqual(false, client.Powers.Single().On);
     }
@@ -127,7 +130,7 @@ public class LifxPluginTests
         var (_, host, client) = await CreateInitializedAsync();
 
         await host.SimulateMqttMessageAsync(
-            LifxStatus.CommandTopic("test-serial"),
+            LifxStatus.CommandTopic(Serial(host)),
             """{"cmd":"color","target":"all","r":0,"g":255,"b":0,"brightness":0.5,"fade_ms":120}""");
 
         Assert.AreEqual(0.5, client.Colors.Single().Brightness, 1e-9);
@@ -138,12 +141,12 @@ public class LifxPluginTests
     public async Task EffectCommand_PublishesEffectField()
     {
         var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
         host.PublishedMessages.Clear();
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "effect all chase");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "effect all chase");
 
-        var state = FindPublished(host, LifxStatus.LightStateTopic("test-serial", client.Lights[0].Id));
+        var state = FindPublished(host, LifxStatus.LightStateTopic(Serial(host), client.Lights[0].Id));
         Assert.IsNotNull(state);
         using var doc = JsonDocument.Parse(state.Value.Payload);
         Assert.AreEqual("chase", doc.RootElement.GetProperty("effect").GetString());
@@ -154,7 +157,7 @@ public class LifxPluginTests
     {
         var (_, host, client) = await CreateInitializedAsync();
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "nope");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "nope");
 
         Assert.AreEqual(0, client.Colors.Count);
         Assert.AreEqual(0, client.DiscoverCalls);
@@ -164,13 +167,13 @@ public class LifxPluginTests
     public async Task Reconnect_RepublishesLights()
     {
         var (_, host, _) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
         host.PublishedMessages.Clear();
 
         await host.SimulateMqttConnectionChangedAsync(false);
         await host.SimulateMqttConnectionChangedAsync(true);
 
-        Assert.IsNotNull(FindPublished(host, LifxStatus.LightsTopic("test-serial")));
+        Assert.IsNotNull(FindPublished(host, LifxStatus.LightsTopic(Serial(host))));
     }
 
     [TestMethod]
@@ -181,7 +184,7 @@ public class LifxPluginTests
             h.StateJson = """{"Lights":[{"Id":"aabb","Ip":"10.0.0.9","Label":"Saved","Product":27}]}""";
         });
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
 
         Assert.IsTrue(client.Probes.Contains("10.0.0.9"));
     }
@@ -192,7 +195,7 @@ public class LifxPluginTests
         var (plugin, host, client) = await CreateInitializedAsync();
 
         await plugin.ShutdownAsync(CancellationToken.None);
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
 
         Assert.AreEqual(0, client.DiscoverCalls);
     }
@@ -230,7 +233,7 @@ public class LifxPluginTests
     public async Task LightSlotToggle_SendsTestColour()
     {
         var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
         client.Reset();
 
         host.SetSetting(LifxPlugin.LightSlotKey(1), "true");
@@ -269,7 +272,7 @@ public class LifxPluginTests
         Assert.AreEqual(1, client.Colors.Count);
         client.Reset();
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
 
         Assert.AreEqual(1, client.DiscoverCalls);
         Assert.AreEqual(1, client.Colors.Count);
@@ -377,7 +380,7 @@ public class LifxPluginTests
             h.SetSetting(LifxPlugin.FollowMasterKey, "true");
         });
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "color all 255 0 0");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "color all 255 0 0");
         Assert.AreEqual(1.0, client.Colors.Single().Brightness, 1e-9);
 
         await host.SimulateEntityStateAsync(new PluginEntityState
@@ -394,7 +397,7 @@ public class LifxPluginTests
     public async Task MasterDimmer_IgnoredWhenFollowOff()
     {
         var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "color all 255 0 0");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "color all 255 0 0");
 
         await host.SimulateEntityStateAsync(new PluginEntityState
         {
@@ -417,7 +420,7 @@ public class LifxPluginTests
             });
         });
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "identify");
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "identify");
 
         Assert.AreEqual(2, client.Colors.Count);
         Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);

@@ -64,7 +64,9 @@ jobs:
           dotnet add tools/DMXCore100.LIFX.DevHost/DMXCore100.LIFX.DevHost.csproj package DMXCore.PluginSdk.Testing --version 1.*
 
       - name: Test against latest 1.* SDK
-        run: dotnet test tests/DMXCore100.LIFX.Tests --configuration Release
+        run: |
+          dotnet build tools/DMXCore100.LIFX.DevHost --configuration Release
+          dotnet test tests/DMXCore100.LIFX.Tests --configuration Release
 
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

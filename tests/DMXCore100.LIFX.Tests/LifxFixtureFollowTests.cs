@@ -52,6 +52,14 @@ public class LifxFixtureFollowTests
     }
 
     [TestMethod]
+    public void TryParse_RejectsMalformedPayloads()
+    {
+        Assert.IsFalse(LifxFixtureFollow.TryParse("{not json", out _));
+        Assert.IsFalse(LifxFixtureFollow.TryParse("10,20", out _));
+        Assert.IsFalse(LifxFixtureFollow.TryParse("10,20,x,50", out _));
+    }
+
+    [TestMethod]
     public void TryRead_LevelOnly_IsWhite()
     {
         Assert.IsTrue(LifxFixtureFollow.TryRead(

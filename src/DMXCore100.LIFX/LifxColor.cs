@@ -59,7 +59,7 @@ public static class LifxColor
     public static (int R, int G, int B) HsbkToRgb8(Hsbk color)
     {
         HsvToRgb(color.Hue / 65535.0, color.Saturation / 65535.0, color.Brightness / 65535.0, out double r, out double g, out double b);
-        return ((int)(r * 255), (int)(g * 255), (int)(b * 255));
+        return ((int)Math.Round(r * 255), (int)Math.Round(g * 255), (int)Math.Round(b * 255));
     }
 
     public static void HsvToRgb(double h, double s, double v, out double r, out double g, out double b)

@@ -33,7 +33,7 @@ Console.CancelKeyPress += (_, args) =>
 Console.WriteLine($"=== {plugin.Info.Name} {plugin.Info.Version} dev host ===");
 Console.WriteLine();
 
-await plugin.InitializeAsync(host, CancellationToken.None);
+await plugin.InitializeAsync(host, cts.Token);
 
 PrintHelp();
 
@@ -118,6 +118,14 @@ try
                         {
                             fixtureBrightness /= 100.0;
                         }
+
+                        if (!double.IsFinite(fixtureBrightness))
+                        {
+                            Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
+                            break;
+                        }
+
+                        fixtureBrightness = Math.Clamp(fixtureBrightness, 0.0, 1.0);
                     }
 
                     await host.SimulateEntityStateAsync(new DMXCore.PluginSdk.PluginEntityState
@@ -157,7 +165,7 @@ try
 
                 case "r":
                     LifxPlugin replacement = new();
-                    await replacement.InitializeAsync(host, CancellationToken.None);
+                    await replacement.InitializeAsync(host, cts.Token);
                     await plugin.ShutdownAsync(CancellationToken.None);
                     plugin = replacement;
                     Console.WriteLine("  plugin re-initialized in-process (assemblies stay loaded)");
@@ -223,7 +231,8 @@ try
 }
 finally
 {
-    await plugin.ShutdownAsync(CancellationToken.None);
+    using var shutdownCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    await plugin.ShutdownAsync(shutdownCts.Token);
     Console.WriteLine("shut down cleanly");
 }
 
