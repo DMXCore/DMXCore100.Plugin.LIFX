@@ -1,8 +1,8 @@
 # DMX Core 100 — LIFX Plugin
 
 Drives **LIFX** WiFi color bulbs and SuperColour / pixel fixtures from DMX
-channel data over the [LIFX LAN protocol](https://lan.developer.lifx.com/).
-No cloud account — UDP on the local network only, device port **56700**.
+Core fixture or playback data over the [LIFX LAN protocol](https://lan.developer.lifx.com/).
+No cloud account required.
 
 ## Setup
 
