@@ -33,7 +33,8 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
         // the RAM discovery cache
         if (config.Options.TryGetValue(PixelsOptionKey, out string? stored)
             && int.TryParse(stored, out int pixels)
-            && pixels > 0)
+            && pixels > 0
+            && pixels <= int.MaxValue / 3)
         {
             return pixels * 3;
         }

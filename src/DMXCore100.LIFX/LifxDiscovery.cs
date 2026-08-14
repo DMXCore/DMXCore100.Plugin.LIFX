@@ -33,10 +33,11 @@ internal sealed class LifxDiscovery
     }
 
     /// <summary>
-    /// Invoked (off the caller's path) whenever a scan completes with at
-    /// least one light, so the plugin can persist the snapshot.
+    /// Invoked whenever a scan completes with at least one light, so the
+    /// plugin can persist the snapshot. The scan does not complete until
+    /// this callback returns, which lets callers await persistence.
     /// </summary>
-    public Action<IReadOnlyList<LifxLight>>? ScanCompleted { get; set; }
+    public Func<IReadOnlyList<LifxLight>, Task>? ScanCompleted { get; set; }
 
     /// <summary>
     /// Pre-populate the cache from persisted state. Ignored once a live scan
@@ -103,18 +104,18 @@ internal sealed class LifxDiscovery
                 .Where(static light => light.IsLight && !LifxProducts.IsSwitch((int)light.Product, light.ModelName))
                 .ToArray();
             this.cached = lights;
-            owner.TrySetResult(lights);
-
-            if (lights.Count > 0)
+            if (lights.Count > 0 && ScanCompleted is { } onCompleted)
             {
                 try
                 {
-                    ScanCompleted?.Invoke(lights);
+                    await onCompleted(lights);
                 }
                 catch
                 {
                 }
             }
+
+            owner.TrySetResult(lights);
         }
         catch (Exception ex)
         {

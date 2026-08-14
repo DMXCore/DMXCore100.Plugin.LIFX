@@ -358,6 +358,23 @@ public class LifxPluginTests
     }
 
     [TestMethod]
+    public async Task PixelGetChannelCount_IgnoresPixelsOptionThatWouldOverflow()
+    {
+        var (_, host, _) = await CreateInitializedAsync();
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+
+        PluginOutputMappingConfig config = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string>
+            {
+                [LifxPixelProtocol.PixelsOptionKey] = (int.MaxValue / 3 + 1).ToString(),
+            },
+        };
+
+        Assert.AreEqual(0, protocol.GetChannelCount(config));
+    }
+
+    [TestMethod]
     public async Task PixelDiscover_StampsPixelsOptionOnDestinations()
     {
         var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
@@ -400,6 +417,29 @@ public class LifxPluginTests
         Assert.IsNotNull(destinations);
         Assert.AreEqual(1, destinations.Count);
         Assert.AreEqual("192.168.1.30", destinations[0].Value);
+    }
+
+    [TestMethod]
+    public async Task ScanCompleted_IsAwaitedBeforeGetLightsAsyncReturns()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var discovery = new LifxDiscovery((_, _) =>
+            Task.FromResult<IReadOnlyList<LifxLight>>([SuperColourTube()]));
+        discovery.ScanCompleted = async _ =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+        };
+
+        Task<IReadOnlyList<LifxLight>> get = discovery.GetLightsAsync(refresh: true, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(get.IsCompleted);
+
+        release.SetResult();
+        IReadOnlyList<LifxLight> lights = await get.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(1, lights.Count);
+        Assert.AreEqual("192.168.1.30", lights[0].Ip);
     }
 
     [TestMethod]

@@ -50,8 +50,20 @@ public class LifxPlugin : IPlugin
         // Seed the discovery cache from persisted state so targets and pixel
         // geometry survive restarts; every completed scan refreshes the blob
         discovery.Seed(LifxLightState.Deserialize(await host.GetStateJsonAsync(cancellationToken)));
-        discovery.ScanCompleted = lights =>
-            _ = host.SetStateJsonAsync(LifxLightState.Serialize(lights), CancellationToken.None);
+        var persistWrites = new SemaphoreSlim(1, 1);
+        discovery.ScanCompleted = async lights =>
+        {
+            string json = LifxLightState.Serialize(lights);
+            await persistWrites.WaitAsync();
+            try
+            {
+                await host.SetStateJsonAsync(json, CancellationToken.None);
+            }
+            finally
+            {
+                persistWrites.Release();
+            }
+        };
 
         this.registrations.Add(host.Outputs.RegisterFixtureProfile(new PluginFixtureProfileDescriptor
         {
