@@ -82,8 +82,9 @@ r                    # shutdown + initialize again
 d                    # dump registered protocols / profiles
 ```
 
-Every push to `main` recreates the rolling `latest` release carrying the
-packed `.dmxplugin`.
+Every push to `main` publishes a GitHub Release marked latest (immutable
+`plugin-<sha>` tag) carrying the packed `.dmxplugin`. The product build
+downloads it with GitHub’s “latest release” mode, not a moving `latest` tag.
 
 ## License
 

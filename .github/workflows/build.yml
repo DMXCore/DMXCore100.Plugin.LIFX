@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 # Serialise main-branch rolling-release updates so concurrent pushes
-# cannot delete/recreate `latest` out of order.
+# cannot publish overlapping plugin tags out of order.
 concurrency:
   group: ${{ github.ref == 'refs/heads/main' && 'lifx-main-release' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
@@ -80,114 +80,31 @@ jobs:
           name: lifx-plugin
           path: artifacts
 
-      # Workflow artifacts expire; keep a permanent copy of the current build
-      # as a single rolling release. Recreated (not appended) so the "latest"
-      # tag always points at the built commit. This repo is private, so
-      # downloading the asset needs an authenticated request (gh release
-      # download / a token) — the main product build does exactly that when it
-      # bundles the plugin.
-      - name: Update rolling latest release
+      # Workflow artifacts expire; keep a GitHub Release marked "latest" for
+      # the product build's DownloadGitHubRelease "latest release" mode.
+      # Use an immutable per-commit tag (not a moving `latest` tag) so
+      # git pull --tags does not conflict.
+      - name: Publish latest GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tmp_tag="latest-next-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          tag="plugin-${GITHUB_SHA}"
           notes="Automatically packaged from \`${GITHUB_SHA}\`."
-          cleanup_tmp() {
-            gh release delete "$tmp_tag" --cleanup-tag --yes || true
-          }
-          trap cleanup_tmp EXIT
 
-          # Publish under a temporary tag first so the existing latest
-          # release stays downloadable until the new assets are up.
-          gh release create "$tmp_tag" artifacts/*.dmxplugin \
+          gh release create "$tag" artifacts/*.dmxplugin \
             --target "$GITHUB_SHA" \
             --title "LIFX" \
-            --notes "$notes"
+            --notes "$notes" \
+            --latest
 
-          promote() {
-            gh release create latest artifacts/*.dmxplugin \
-              --target "$GITHUB_SHA" \
-              --title "LIFX" \
-              --notes "$notes"
-          }
+          # Drop the historical moving tag; GitHub "latest release" is this
+          # plugin-* tag. Then remove superseded rolling tags.
+          gh release delete latest --cleanup-tag --yes || true
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/latest" >/dev/null 2>&1 || true
 
-          delete_stale_latest_tag() {
-            gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/latest" >/dev/null 2>&1 || true
-          }
-
-          reconcile_latest() {
-            if ! gh release view latest >/dev/null 2>&1; then
-              delete_stale_latest_tag
-              return 1
-            fi
-
-            target=$(gh release view latest --json targetCommitish --jq .targetCommitish)
-            uploaded=$(gh release view latest --json assets --jq '.assets[].name')
-            missing=0
-            for f in artifacts/*.dmxplugin; do
-              name=$(basename "$f")
-              if ! printf '%s\n' "$uploaded" | grep -Fxq "$name"; then
-                missing=1
-                break
-              fi
-            done
-
-            if [ "$target" = "$GITHUB_SHA" ] && [ "$missing" -eq 0 ]; then
-              return 0
-            fi
-
-            if [ "$target" = "$GITHUB_SHA" ]; then
-              for f in artifacts/*.dmxplugin; do
-                name=$(basename "$f")
-                if ! printf '%s\n' "$uploaded" | grep -Fxq "$name"; then
-                  gh release upload latest "$f" --clobber
-                fi
-              done
-              return 0
-            fi
-
-            gh release delete latest --cleanup-tag --yes || true
-            delete_stale_latest_tag
-            return 1
-          }
-
-          set +e
-          delete_output=$(gh release delete latest --cleanup-tag --yes 2>&1)
-          delete_status=$?
-          set -e
-          if [ "$delete_status" -ne 0 ]; then
-            if ! printf '%s' "$delete_output" | grep -Eqi 'not found|HTTP 404'; then
-              printf '%s\n' "$delete_output" >&2
-              gh release delete "$tmp_tag" --cleanup-tag --yes || true
-              exit "$delete_status"
-            fi
-            # Release is gone but a leftover latest tag can still block create.
-            delete_stale_latest_tag
-          fi
-
-          # A normal (non-prerelease) release: the DMX Core 100 product build
-          # downloads it with DownloadGitHubRelease's "latest release" mode,
-          # which skips prereleases.
-          if ! promote; then
-            success=0
-            delay=2
-            for _ in 1 2 3; do
-              if reconcile_latest; then
-                success=1
-                break
-              fi
-              sleep "$delay"
-              delay=$((delay * 2))
-              if promote; then
-                success=1
-                break
-              fi
-            done
-            if [ "$success" -ne 1 ]; then
-              exit 1
-            fi
-          fi
-
-          gh release delete "$tmp_tag" --cleanup-tag --yes
+          while IFS= read -r old; do
+            [ -n "$old" ] || continue
+            gh release delete "$old" --cleanup-tag --yes || true
+          done < <(gh release list --limit 50 --json tagName,isLatest --jq '.[] | select(.isLatest|not) | .tagName | select(startswith("plugin-") or startswith("latest-next-"))')
