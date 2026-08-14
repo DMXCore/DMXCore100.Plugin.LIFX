@@ -10,7 +10,7 @@
     <Version>0.3.0</Version>
     <Authors>DMX Core</Authors>
     <!-- No PluginMinSdkVersion override: this plugin uses mapping fields and
-         destination-option stamping (SDK contract 1.4), so the derived floor
+         destination-option stamping (SDK contract 1.6), so the derived floor
          (the contract we compile against) is the real requirement. -->
   </PropertyGroup>
 

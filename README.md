@@ -32,7 +32,7 @@ latest-wins. Color mappings convert RGB to LIFX HSBK and send `SetColor`
 with a 75 ms duration. Pixel mappings send `Set64` (Tube / Luna / tiles)
 or `SetExtendedColorZones` (Beam / strips).
 
-Requires a Core whose plugin SDK contract is **1.4** or newer (output
+Requires a Core whose plugin SDK contract is **1.6** or newer (output
 protocols, destination discovery, plugin fixture profiles, and mapping
 fields).
 
@@ -55,7 +55,7 @@ fields).
   is patched to the LIFX profile, and that the output is enabled.
 - **Wrong bulb:** destination is the IP address. Re-run Discover after a
   DHCP change, or set a static lease.
-- **Plugin will not load:** the device firmware must expose SDK 1.4+.
+- **Plugin will not load:** the device firmware must expose SDK 1.6+.
 
 ## Development
 
