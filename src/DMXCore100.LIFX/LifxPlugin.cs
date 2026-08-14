@@ -316,7 +316,7 @@ public class LifxPlugin : IPlugin
         }
 
         this.client = this.clientFactory?.Invoke(BindAddress)
-            ?? new LifxLanClient(BindAddress, OnListenFailure);
+            ?? new LifxLanClient(BindAddress, OnListenFailure, OnListenRecovered);
         this.effects = new LifxEffectRunner(
             this.client,
             ex => this.host.Logger.LogWarning(ex, "LIFX effect tick failed"));
@@ -365,8 +365,14 @@ public class LifxPlugin : IPlugin
 
     private void OnListenFailure(Exception ex)
     {
-        this.host.Logger.LogError(ex, "LIFX listen failed");
+        this.host.Logger.LogError(ex, "LIFX listen failed; recreating the UDP socket");
         this.host.SetConnectionState(false, ex.Message);
+    }
+
+    private void OnListenRecovered()
+    {
+        this.host.SetConnectionState(true, "LIFX client ready");
+        this.host.Logger.LogInformation("LIFX listen recovered");
     }
 
     private async Task DiscoverAndPublish(CancellationToken cancellationToken)
@@ -701,19 +707,30 @@ public class LifxPlugin : IPlugin
             return false;
         }
 
+        bool foundState = false;
         foreach (string entityCode in LifxFixtureFollow.EntityCodes(code))
         {
             PluginEntityState? state = await this.host.Entities.GetStateAsync(entityCode, cancellationToken);
-            if (state != null && ApplyFollowedFixture(state))
+            if (state == null)
+            {
+                continue;
+            }
+
+            foundState = true;
+            if (ApplyFollowedFixture(state))
             {
                 return true;
             }
         }
 
-        this.host.Logger.LogWarning(
-            "Follow fixture '{Code}' has no entity state (tried {Tried}). Fixture Control does not publish fixtures to plugins yet — only entities such as system.masterdimmer.",
-            code,
-            string.Join(", ", LifxFixtureFollow.EntityCodes(code)));
+        if (!foundState)
+        {
+            this.host.Logger.LogWarning(
+                "Follow fixture '{Code}' entity state was unavailable (tried {Tried}).",
+                code,
+                string.Join(", ", LifxFixtureFollow.EntityCodes(code)));
+        }
+
         return false;
     }
 

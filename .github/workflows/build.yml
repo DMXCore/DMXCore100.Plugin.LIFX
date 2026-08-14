@@ -87,6 +87,7 @@ jobs:
       - name: Update rolling latest release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           tmp_tag="latest-next-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -110,6 +111,46 @@ jobs:
               --notes "$notes"
           }
 
+          delete_stale_latest_tag() {
+            gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/latest" >/dev/null 2>&1 || true
+          }
+
+          reconcile_latest() {
+            if ! gh release view latest >/dev/null 2>&1; then
+              delete_stale_latest_tag
+              return 1
+            fi
+
+            target=$(gh release view latest --json targetCommitish --jq .targetCommitish)
+            uploaded=$(gh release view latest --json assets --jq '.assets[].name')
+            missing=0
+            for f in artifacts/*.dmxplugin; do
+              name=$(basename "$f")
+              if ! printf '%s\n' "$uploaded" | grep -Fxq "$name"; then
+                missing=1
+                break
+              fi
+            done
+
+            if [ "$target" = "$GITHUB_SHA" ] && [ "$missing" -eq 0 ]; then
+              return 0
+            fi
+
+            if [ "$target" = "$GITHUB_SHA" ]; then
+              for f in artifacts/*.dmxplugin; do
+                name=$(basename "$f")
+                if ! printf '%s\n' "$uploaded" | grep -Fxq "$name"; then
+                  gh release upload latest "$f" --clobber
+                fi
+              done
+              return 0
+            fi
+
+            gh release delete latest --cleanup-tag --yes || true
+            delete_stale_latest_tag
+            return 1
+          }
+
           set +e
           delete_output=$(gh release delete latest --cleanup-tag --yes 2>&1)
           delete_status=$?
@@ -121,14 +162,30 @@ jobs:
               exit "$delete_status"
             fi
             # Release is gone but a leftover latest tag can still block create.
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" >/dev/null 2>&1 || true
+            delete_stale_latest_tag
           fi
 
           # A normal (non-prerelease) release: the DMX Core 100 product build
           # downloads it with DownloadGitHubRelease's "latest release" mode,
           # which skips prereleases.
           if ! promote; then
-            promote || exit 1
+            success=0
+            delay=2
+            for _ in 1 2 3; do
+              if reconcile_latest; then
+                success=1
+                break
+              fi
+              sleep "$delay"
+              delay=$((delay * 2))
+              if promote; then
+                success=1
+                break
+              fi
+            done
+            if [ "$success" -ne 1 ]; then
+              exit 1
+            fi
           fi
 
           gh release delete "$tmp_tag" --cleanup-tag --yes

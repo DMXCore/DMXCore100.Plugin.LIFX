@@ -9,12 +9,16 @@ namespace DMXCore100.LIFX;
 /// <summary>
 /// LIFX LAN UDP client: broadcast discovery, SET_COLOR / SET_POWER, and
 /// multizone packets for SuperColour / strip / tile fixtures. A
-/// non-recoverable listen <see cref="SocketException"/> stops the receive
-/// loop; restart the plugin to recover.
+/// non-recoverable listen <see cref="SocketException"/> recreates the
+/// socket in-process with backoff — the host cannot unload plugin
+/// assemblies, so recovery must not require a plugin restart.
 /// </summary>
 public sealed class LifxLanClient : ILifxLanClient
 {
-    private readonly UdpClient udp;
+    private const int ListenBackoffMs = 200;
+    private const int ListenBackoffMaxMs = 5000;
+
+    private readonly IPAddress bindAddress;
     private readonly LifxPackets packets;
     private readonly Dictionary<string, LifxLight> lights = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock gate = new();
@@ -23,28 +27,26 @@ public sealed class LifxLanClient : ILifxLanClient
     private readonly uint source;
     private readonly Lock sendGate = new();
     private readonly Action<Exception>? onListenFailure;
+    private readonly Action? onListenRecovered;
+    private UdpClient udp;
     private int sequence;
     private int disposed;
     private int listenFailed;
 
-    public LifxLanClient(string bindIp = "0.0.0.0", Action<Exception>? onListenFailure = null)
+    public LifxLanClient(
+        string bindIp = "0.0.0.0",
+        Action<Exception>? onListenFailure = null,
+        Action? onListenRecovered = null)
     {
         this.source = (uint)Random.Shared.Next(2, int.MaxValue);
         this.sequence = Random.Shared.Next(0, 256);
         this.packets = new LifxPackets(this.source, NextSequence);
         this.onListenFailure = onListenFailure;
-
-        IPAddress address = string.IsNullOrWhiteSpace(bindIp) || bindIp == "0.0.0.0"
+        this.onListenRecovered = onListenRecovered;
+        this.bindAddress = string.IsNullOrWhiteSpace(bindIp) || bindIp == "0.0.0.0"
             ? IPAddress.Any
             : IPAddress.Parse(bindIp);
-        var endpoint = new IPEndPoint(address, 0);
-
-        this.udp = new UdpClient(endpoint.AddressFamily);
-        this.udp.EnableBroadcast = true;
-        this.udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
-        this.udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        this.udp.Client.Bind(endpoint);
-
+        this.udp = CreateUdp();
         this.listenTask = ListenAsync(this.listenCts.Token);
     }
 
@@ -165,7 +167,11 @@ public sealed class LifxLanClient : ILifxLanClient
         }
 
         await this.listenCts.CancelAsync();
-        this.udp.Dispose();
+        lock (this.sendGate)
+        {
+            this.udp.Dispose();
+        }
+
         try
         {
             await this.listenTask;
@@ -219,11 +225,7 @@ public sealed class LifxLanClient : ILifxLanClient
 
     private void Send(byte[] packet, IPAddress ip)
     {
-        if (Volatile.Read(ref this.listenFailed) != 0)
-        {
-            throw new InvalidOperationException("LIFX listen stopped; restart the plugin to recover.");
-        }
-
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref this.disposed) != 0, this);
         lock (this.sendGate)
         {
             this.udp.Send(packet, packet.Length, new IPEndPoint(ip, LifxConstants.Port));
@@ -232,12 +234,19 @@ public sealed class LifxLanClient : ILifxLanClient
 
     private async Task ListenAsync(CancellationToken cancellationToken)
     {
+        int backoffMs = ListenBackoffMs;
         while (!cancellationToken.IsCancellationRequested)
         {
+            UdpClient socket;
+            lock (this.sendGate)
+            {
+                socket = this.udp;
+            }
+
             UdpReceiveResult result;
             try
             {
-                result = await this.udp.ReceiveAsync(cancellationToken);
+                result = await socket.ReceiveAsync(cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -245,7 +254,12 @@ public sealed class LifxLanClient : ILifxLanClient
             }
             catch (ObjectDisposedException)
             {
-                break;
+                if (Volatile.Read(ref this.disposed) != 0 || cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                continue;
             }
             catch (SocketException ex) when (IsRecoverable(ex.SocketErrorCode))
             {
@@ -262,15 +276,76 @@ public sealed class LifxLanClient : ILifxLanClient
             }
             catch (SocketException ex)
             {
-                // Non-recoverable: the receive loop stops. Recreating the
-                // bound UDP socket here is unsafe while Send still uses it;
-                // restart the plugin to recover.
                 Interlocked.Exchange(ref this.listenFailed, 1);
                 NotifyListenFailure(ex);
-                break;
+                if (!TryRecreateSocket())
+                {
+                    break;
+                }
+
+                try
+                {
+                    await Task.Delay(backoffMs, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                backoffMs = Math.Min(backoffMs * 2, ListenBackoffMaxMs);
+                continue;
+            }
+
+            backoffMs = ListenBackoffMs;
+            if (Interlocked.Exchange(ref this.listenFailed, 0) != 0)
+            {
+                NotifyListenRecovered();
             }
 
             HandlePacket(result.Buffer, result.RemoteEndPoint.Address.ToString());
+        }
+    }
+
+    private UdpClient CreateUdp()
+    {
+        var endpoint = new IPEndPoint(this.bindAddress, 0);
+        var client = new UdpClient(endpoint.AddressFamily);
+        client.EnableBroadcast = true;
+        client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
+        client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        client.Client.Bind(endpoint);
+        return client;
+    }
+
+    private bool TryRecreateSocket()
+    {
+        if (Volatile.Read(ref this.disposed) != 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            UdpClient replacement = CreateUdp();
+            lock (this.sendGate)
+            {
+                if (Volatile.Read(ref this.disposed) != 0)
+                {
+                    replacement.Dispose();
+                    return false;
+                }
+
+                UdpClient previous = this.udp;
+                this.udp = replacement;
+                previous.Dispose();
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            NotifyListenFailure(ex);
+            return Volatile.Read(ref this.disposed) == 0;
         }
     }
 
@@ -354,6 +429,17 @@ public sealed class LifxLanClient : ILifxLanClient
         try
         {
             this.onListenFailure?.Invoke(ex);
+        }
+        catch
+        {
+        }
+    }
+
+    private void NotifyListenRecovered()
+    {
+        try
+        {
+            this.onListenRecovered?.Invoke();
         }
         catch
         {

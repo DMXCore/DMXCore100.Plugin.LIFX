@@ -175,10 +175,13 @@ dotnet test tests/DMXCore100.LIFX.Tests
 ./pack.sh            # or pack.ps1 — produces artifacts/lifx-plugin.dmxplugin
 ```
 
-`tools/DMXCore100.LIFX.DevHost` is an interactive console harness (F5 in
-Visual Studio) against an in-memory host. Discovery and colour commands use
-the real LAN client, so you can talk to bulbs on your network without a
-device.
+Iterate with `tools/DMXCore100.LIFX.DevHost` (F5 in Visual Studio) and the
+unit tests — both use [`TestPluginHost`](https://www.nuget.org/packages/DMXCore.PluginSdk.Testing),
+the same tester as the [example plugin](https://github.com/DMXCore/DMXCore100.ExamplePlugin).
+The device loads plugins in-process and cannot unload .NET assemblies, so
+uploading a new `.dmxplugin` needs a full device restart. The DevHost
+recycles `Initialize` / `Shutdown` in the same process (`r`) and talks to
+real bulbs over the LAN.
 
 ```text
 discover
@@ -191,6 +194,8 @@ cueend
 s follow-fixture HOUSE
 fixture HOUSE 255 140 40 80
 s follow-master true
+v 0.4                # master dimmer
+r                    # shutdown + initialize again
 d                    # dump published lights / triggers
 ```
 

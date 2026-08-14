@@ -1,13 +1,28 @@
 using System.Globalization;
+using DMXCore.PluginSdk;
 using DMXCore.PluginSdk.Testing;
 using DMXCore100.LIFX;
 
 // Interactive harness: F5 this project to talk to real LIFX lights on the
 // LAN through the plugin, without a DMX Core 100 device. MQTT commands are
 // simulated in-process; UDP discovery and SET_COLOR go out on the network.
+// Use `r` to recycle Initialize/Shutdown in-process — the host cannot unload
+// plugin assemblies, so this is the practical restart.
 
-var plugin = new LifxPlugin();
+LifxPlugin plugin = new();
 var host = new TestPluginHost(plugin.Info);
+host.EntityCatalog.Add(new PluginEntity
+{
+    Code = "system.masterdimmer",
+    Name = "Master Dimmer",
+    Kind = PluginEntityKind.Level,
+});
+host.EntityCatalog.Add(new PluginEntity
+{
+    Code = "fixture.HOUSE",
+    Name = "House LIFX",
+    Kind = PluginEntityKind.Level,
+});
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, args) =>
 {
@@ -28,7 +43,15 @@ try
     while (running && !cts.IsCancellationRequested)
     {
         Console.Write("> ");
-        string? input = Console.ReadLine()?.Trim();
+        string? input;
+        try
+        {
+            input = (await ReadLineAsync(cts.Token))?.Trim();
+        }
+        catch (OperationCanceledException)
+        {
+            break;
+        }
 
         if (input == null || cts.IsCancellationRequested)
         {
@@ -83,7 +106,9 @@ try
                             fixtureParts[4],
                             NumberStyles.Float,
                             CultureInfo.InvariantCulture,
-                            out fixtureBrightness))
+                            out fixtureBrightness)
+                            || !double.IsFinite(fixtureBrightness)
+                            || fixtureBrightness is < 0 or > 100)
                         {
                             Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
                             break;
@@ -104,6 +129,44 @@ try
 
                 case "cueend":
                     await host.SimulateCueEndedAsync(parts.Length > 1 ? parts[1] : "TEST");
+                    break;
+
+                case "v":
+                    double dimmer = 0.5;
+                    if (parts.Length > 1)
+                    {
+                        if (!double.TryParse(
+                            parts[1],
+                            NumberStyles.Float,
+                            CultureInfo.InvariantCulture,
+                            out dimmer)
+                            || !double.IsFinite(dimmer)
+                            || dimmer is < 0 or > 1)
+                        {
+                            Console.WriteLine("usage: v [level]");
+                            break;
+                        }
+                    }
+
+                    await host.SimulateEntityStateAsync(new PluginEntityState
+                    {
+                        Code = "system.masterdimmer",
+                        Level = dimmer,
+                    });
+                    break;
+
+                case "r":
+                    LifxPlugin replacement = new();
+                    await replacement.InitializeAsync(host, CancellationToken.None);
+                    await plugin.ShutdownAsync(CancellationToken.None);
+                    plugin = replacement;
+                    Console.WriteLine("  plugin re-initialized in-process (assemblies stay loaded)");
+                    break;
+
+                case "i":
+                    Console.WriteLine($"  device: {host.DeviceInfo.ProductName} '{host.DeviceInfo.DeviceName}'");
+                    Console.WriteLine($"  serial: {host.DeviceInfo.Serial}");
+                    Console.WriteLine($"  version: {host.DeviceInfo.SoftwareVersion}");
                     break;
 
                 case "x":
@@ -164,6 +227,12 @@ finally
     Console.WriteLine("shut down cleanly");
 }
 
+static async Task<string?> ReadLineAsync(CancellationToken cancellationToken)
+{
+    Task<string?> read = Task.Run(Console.ReadLine, cancellationToken);
+    return await read.WaitAsync(cancellationToken);
+}
+
 static void PrintHelp()
 {
     Console.WriteLine("""
@@ -176,9 +245,12 @@ static void PrintHelp()
           power all on|off
           effect all chase         chase | sinewave | rainbow | pixel-chase | stop
           fixture <code> r g b [br]  simulate Fixture Control follow
+          v [level]                simulate master dimmer (0-1, default 0.5)
           cueend [code]            simulate a cue-ended event
           m <payload>              raw command payload (text or JSON)
           s <key> <value>          change a setting (discover-now true, light-1 true)
+          r                        shutdown + initialize again (no assembly unload)
+          i                        show device info
           x                        toggle MQTT connection
           d                        dump published messages / triggers
           q                        quit
