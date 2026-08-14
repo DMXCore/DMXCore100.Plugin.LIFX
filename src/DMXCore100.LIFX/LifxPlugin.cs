@@ -43,9 +43,15 @@ public class LifxPlugin : IPlugin
 
     public PluginInfo Info { get; }
 
-    public Task InitializeAsync(IPluginHost host, CancellationToken cancellationToken)
+    public async Task InitializeAsync(IPluginHost host, CancellationToken cancellationToken)
     {
         var discovery = new LifxDiscovery(this.discoverOverride);
+
+        // Seed the discovery cache from persisted state so targets and pixel
+        // geometry survive restarts; every completed scan refreshes the blob
+        discovery.Seed(LifxLightState.Deserialize(await host.GetStateJsonAsync(cancellationToken)));
+        discovery.ScanCompleted = lights =>
+            _ = host.SetStateJsonAsync(LifxLightState.Serialize(lights), CancellationToken.None);
 
         this.registrations.Add(host.Outputs.RegisterFixtureProfile(new PluginFixtureProfileDescriptor
         {
@@ -91,7 +97,6 @@ public class LifxPlugin : IPlugin
             new LifxPixelProtocol(discovery, this.sendOverride)));
 
         host.SetConnectionState(true, "LIFX output ready");
-        return Task.CompletedTask;
     }
 
     public Task ShutdownAsync(CancellationToken cancellationToken)
@@ -114,6 +119,16 @@ public class LifxPlugin : IPlugin
             PortTypeDisplayName = "LIFX",
             MaxUpdatesPerSecond = LifxConstants.MaxUpdatesPerSecond,
             SupportsDestinationDiscovery = true,
+            MappingFields =
+            [
+                new PluginSettingDescriptor
+                {
+                    Key = LifxPixelProtocol.PixelsOptionKey,
+                    Label = "Pixels",
+                    Type = PluginSettingType.Integer,
+                    Description = "Pixel count of the device; filled automatically when a discovered device is picked",
+                },
+            ],
         };
 
     private static OutputProtocolDescriptor Descriptor(string id, string displayName, string personality) =>

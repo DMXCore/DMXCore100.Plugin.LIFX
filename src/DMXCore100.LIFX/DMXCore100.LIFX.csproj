@@ -7,12 +7,11 @@
     <!-- The SDK generates manifest.json and PluginBuildInfo from these -->
     <PluginId>lifx</PluginId>
     <PluginDisplayName>LIFX</PluginDisplayName>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Authors>DMX Core</Authors>
-    <!-- Floor: destination discovery + plugin fixture profiles (SDK 1.3).
-         Without this override the floor would default to the contract of the
-         SDK assembly we compile against, which may be newer than we need. -->
-    <PluginMinSdkVersion>1.3</PluginMinSdkVersion>
+    <!-- No PluginMinSdkVersion override: this plugin uses mapping fields and
+         destination-option stamping (SDK contract 1.4), so the derived floor
+         (the contract we compile against) is the real requirement. -->
   </PropertyGroup>
 
   <ItemGroup>

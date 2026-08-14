@@ -16,7 +16,8 @@ On the Core's **Outputs** page, add an output of type **LIFX**:
    temperature), or Pixel (RGB × discovered zones).
 2. **Destination Address** — the device IP. Use **Discover**, or type a
    known address. Pixel devices show a zone count, e.g.
-   `Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)`.
+   `Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)`; picking one also
+   fills the mapping's **Pixels** field automatically.
 3. **Start Channel** — DMX start address of that device's channels.
 
 In the fixture editor, patch bulbs with the plugin's **LIFX / Color Bulb**
@@ -31,14 +32,15 @@ latest-wins. Color mappings convert RGB to LIFX HSBK and send `SetColor`
 with a 75 ms duration. Pixel mappings send `Set64` (Tube / Luna / tiles)
 or `SetExtendedColorZones` (Beam / strips).
 
-Requires a Core whose plugin SDK contract is **1.3** or newer (output
-protocols, destination discovery, and plugin fixture profiles).
+Requires a Core whose plugin SDK contract is **1.4** or newer (output
+protocols, destination discovery, plugin fixture profiles, and mapping
+fields).
 
 | Protocol | Channels | Notes |
 |---|---|---|
 | `LIFX_COLOR` | RGB | White is mixed in RGB; kelvin stays at 3500 K |
-| `LIFX_COLOR_CT` | RGB + ColorTemperature | CT 0 = 2500 K (warm), 255 = 9000 K (cool) |
-| `LIFX_PIXEL` | RGB × zones | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. Run Discover so zone geometry is cached. |
+| `LIFX_COLOR_CT` | RGB + ColorTemperature | CT 0 = 1500 K (warm), 255 = 9000 K (cool) |
+| `LIFX_PIXEL` | RGB × zones | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. The Pixels field (stamped by Discover) sets the channel count; discovery results also persist across restarts. |
 
 ## Troubleshooting
 
@@ -46,13 +48,14 @@ protocols, destination discovery, and plugin fixture profiles).
   subnet, then press Discover again. The plugin broadcasts LIFX
   `GetService` (not mDNS), then queries labels, product, and zone/tile
   geometry for SuperColour / strips.
-- **Pixel mapping has 0 channels:** Discover on the Pixel protocol first so
-  zone count is cached. Give the fixture a static DHCP lease.
+- **Pixel mapping has 0 channels:** set the mapping's **Pixels** field, or
+  run Discover on the Pixel protocol and pick the device (which fills it).
+  Give the fixture a static DHCP lease.
 - **Bulb does not follow cues:** check the mapping's IP, that the fixture
   is patched to the LIFX profile, and that the output is enabled.
 - **Wrong bulb:** destination is the IP address. Re-run Discover after a
   DHCP change, or set a static lease.
-- **Plugin will not load:** the device firmware must expose SDK 1.3+.
+- **Plugin will not load:** the device firmware must expose SDK 1.4+.
 
 ## Development
 
