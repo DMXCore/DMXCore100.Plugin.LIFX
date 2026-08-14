@@ -1,0 +1,8 @@
+{
+  "id": "lifx",
+  "name": "LIFX",
+  "version": "0.0.3",
+  "entryAssembly": "DMXCore100.LIFX.dll",
+  "minSdkVersion": "0.2",
+  "author": "DMX Core"
+}

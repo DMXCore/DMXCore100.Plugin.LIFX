@@ -1,0 +1,17 @@
+name: Dependabot PR opened
+
+# Unprivileged signal only. The trusted retarget job lives in
+# dependabot-base.yml (workflow_run / schedule) and never uses
+# pull_request_target.
+on:
+  pull_request:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  note:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Dependabot PR ${{ github.event.pull_request.number }}"

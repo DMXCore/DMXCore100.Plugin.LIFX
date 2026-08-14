@@ -4,44 +4,190 @@ on:
   push:
   pull_request:
   schedule:
-    # Weekly build so the floating DMXCore.PluginSdk 0.* reference surfaces
-    # breakage from new SDK releases even when this repo is idle.
-    - cron: '15 6 * * 1'
+    # Weekly job restores DMXCore.PluginSdk 1.* so new SDK releases
+    # surface breakage even when this repo is idle. Standard builds use
+    # the pinned versions in the project files.
+    - cron: '45 6 * * 1'
 
 permissions:
-  contents: write
+  contents: read
+
+# Serialise main-branch rolling-release updates so concurrent pushes
+# cannot delete/recreate `latest` out of order.
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && 'lifx-main-release' || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0.x
 
       - name: Test
-        run: dotnet test tests/DMXCore100.ExamplePlugin.Tests --configuration Release
+        run: dotnet test tests/DMXCore100.LIFX.Tests --configuration Release
 
       - name: Build and pack
         run: ./pack.sh
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: example-plugin
+          name: lifx-plugin
           path: artifacts/*.dmxplugin
 
-      # Workflow artifacts expire; keep a permanent, anonymously downloadable
-      # copy of the current build as a single rolling release. Recreated (not
-      # appended) so the "latest" tag always points at the built commit.
+  sdk-float:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore floating 1.* SDK
+        run: |
+          dotnet add src/DMXCore100.LIFX/DMXCore100.LIFX.csproj package DMXCore.PluginSdk --version 1.*
+          dotnet add tests/DMXCore100.LIFX.Tests/DMXCore100.LIFX.Tests.csproj package DMXCore.PluginSdk.Testing --version 1.*
+          dotnet add tools/DMXCore100.LIFX.DevHost/DMXCore100.LIFX.DevHost.csproj package DMXCore.PluginSdk.Testing --version 1.*
+
+      - name: Test against latest 1.* SDK
+        run: |
+          dotnet build tools/DMXCore100.LIFX.DevHost --configuration Release
+          dotnet test tests/DMXCore100.LIFX.Tests --configuration Release
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: lifx-plugin
+          path: artifacts
+
+      # Workflow artifacts expire; keep a permanent copy of the current build
+      # as a single rolling release. Recreated (not appended) so the "latest"
+      # tag always points at the built commit. This repo is private, so
+      # downloading the asset needs an authenticated request (gh release
+      # download / a token) — the main product build does exactly that when it
+      # bundles the plugin.
       - name: Update rolling latest release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release delete latest --cleanup-tag --yes || true
-          gh release create latest artifacts/*.dmxplugin \
+          set -euo pipefail
+          tmp_tag="latest-next-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          notes="Automatically packaged from \`${GITHUB_SHA}\`."
+          cleanup_tmp() {
+            gh release delete "$tmp_tag" --cleanup-tag --yes || true
+          }
+          trap cleanup_tmp EXIT
+
+          # Publish under a temporary tag first so the existing latest
+          # release stays downloadable until the new assets are up.
+          gh release create "$tmp_tag" artifacts/*.dmxplugin \
+            --target "$GITHUB_SHA" \
             --title "Latest build" \
-            --prerelease \
-            --notes "Automatically packaged from \`${GITHUB_SHA}\`. The plugin SDK is 0.x preview; host-side plugin loading ships in a future DMX Core 100 release."
+            --notes "$notes"
+
+          promote() {
+            gh release create latest artifacts/*.dmxplugin \
+              --target "$GITHUB_SHA" \
+              --title "Latest build" \
+              --notes "$notes"
+          }
+
+          delete_stale_latest_tag() {
+            gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/latest" >/dev/null 2>&1 || true
+          }
+
+          reconcile_latest() {
+            if ! gh release view latest >/dev/null 2>&1; then
+              delete_stale_latest_tag
+              return 1
+            fi
+
+            target=$(gh release view latest --json targetCommitish --jq .targetCommitish)
+            uploaded=$(gh release view latest --json assets --jq '.assets[].name')
+            missing=0
+            for f in artifacts/*.dmxplugin; do
+              name=$(basename "$f")
+              if ! printf '%s\n' "$uploaded" | grep -Fxq "$name"; then
+                missing=1
+                break
+              fi
+            done
+
+            if [ "$target" = "$GITHUB_SHA" ] && [ "$missing" -eq 0 ]; then
+              return 0
+            fi
+
+            if [ "$target" = "$GITHUB_SHA" ]; then
+              for f in artifacts/*.dmxplugin; do
+                name=$(basename "$f")
+                if ! printf '%s\n' "$uploaded" | grep -Fxq "$name"; then
+                  gh release upload latest "$f" --clobber
+                fi
+              done
+              return 0
+            fi
+
+            gh release delete latest --cleanup-tag --yes || true
+            delete_stale_latest_tag
+            return 1
+          }
+
+          set +e
+          delete_output=$(gh release delete latest --cleanup-tag --yes 2>&1)
+          delete_status=$?
+          set -e
+          if [ "$delete_status" -ne 0 ]; then
+            if ! printf '%s' "$delete_output" | grep -Eqi 'not found|HTTP 404'; then
+              printf '%s\n' "$delete_output" >&2
+              gh release delete "$tmp_tag" --cleanup-tag --yes || true
+              exit "$delete_status"
+            fi
+            # Release is gone but a leftover latest tag can still block create.
+            delete_stale_latest_tag
+          fi
+
+          # A normal (non-prerelease) release: the DMX Core 100 product build
+          # downloads it with DownloadGitHubRelease's "latest release" mode,
+          # which skips prereleases.
+          if ! promote; then
+            success=0
+            delay=2
+            for _ in 1 2 3; do
+              if reconcile_latest; then
+                success=1
+                break
+              fi
+              sleep "$delay"
+              delay=$((delay * 2))
+              if promote; then
+                success=1
+                break
+              fi
+            done
+            if [ "$success" -ne 1 ]; then
+              exit 1
+            fi
+          fi
+
+          gh release delete "$tmp_tag" --cleanup-tag --yes

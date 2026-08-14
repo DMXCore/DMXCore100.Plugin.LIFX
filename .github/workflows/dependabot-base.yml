@@ -1,0 +1,39 @@
+name: Dependabot base branch
+
+# Security-update PRs always target the repository default branch (main).
+# Version updates already use development via .github/dependabot.yml.
+# Retarget security PRs so they land on development too.
+#
+# Runs on the default branch only (workflow_run / schedule / dispatch) so
+# the write token is never issued to pull_request_target. Optional secret
+# DEPENDABOT_PR_PAT (GitHub App installation token or PAT with
+# pull-requests: write) overrides GITHUB_TOKEN when set.
+on:
+  workflow_run:
+    workflows: [Dependabot PR opened]
+    types: [completed]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  retarget:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Point Dependabot PRs at development
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_PR_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr list --repo "$GH_REPO" --author "app/dependabot" --base main --state open --json number,author \
+            --jq '.[] | select(.author.login == "dependabot[bot]") | .number' \
+          | while read -r pr; do
+              [ -n "$pr" ] || continue
+              gh pr edit "$pr" --repo "$GH_REPO" --base development
+            done

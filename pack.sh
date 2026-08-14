@@ -5,9 +5,11 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
 publish_dir="$root/artifacts/publish"
-output="$root/artifacts/example-plugin.dmxplugin"
+output="$root/artifacts/lifx-plugin.dmxplugin"
 
-dotnet publish "$root/src/DMXCore100.ExamplePlugin" --configuration Release --output "$publish_dir"
+rm -rf "$publish_dir"
+
+dotnet publish "$root/src/DMXCore100.LIFX" --configuration Release --output "$publish_dir"
 
 rm -f "$output"
 
