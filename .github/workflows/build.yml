@@ -4,9 +4,9 @@ on:
   push:
   pull_request:
   schedule:
-    # Weekly build so the floating DMXCore.PluginSdk 0.* reference surfaces
+    # Weekly build so the floating DMXCore.PluginSdk 1.* reference surfaces
     # breakage from new SDK releases even when this repo is idle.
-    - cron: '15 6 * * 1'
+    - cron: '45 6 * * 1'
 
 permissions:
   contents: write
@@ -22,26 +22,31 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Test
-        run: dotnet test tests/DMXCore100.ExamplePlugin.Tests --configuration Release
+        run: dotnet test tests/DMXCore100.LIFX.Tests --configuration Release
 
       - name: Build and pack
         run: ./pack.sh
 
       - uses: actions/upload-artifact@v7
         with:
-          name: example-plugin
+          name: lifx-plugin
           path: artifacts/*.dmxplugin
 
-      # Workflow artifacts expire; keep a permanent, anonymously downloadable
-      # copy of the current build as a single rolling release. Recreated (not
-      # appended) so the "latest" tag always points at the built commit.
+      # Workflow artifacts expire; keep a permanent copy of the current build
+      # as a single rolling release. Recreated (not appended) so the "latest"
+      # tag always points at the built commit. This repo is private, so
+      # downloading the asset needs an authenticated request (gh release
+      # download / a token) — the main product build does exactly that when it
+      # bundles the plugin.
       - name: Update rolling latest release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --cleanup-tag --yes || true
+          # A normal (non-prerelease) release: the DMX Core 100 product build
+          # downloads it with DownloadGitHubRelease's "latest release" mode,
+          # which skips prereleases.
           gh release create latest artifacts/*.dmxplugin \
             --title "Latest build" \
-            --prerelease \
-            --notes "Automatically packaged from \`${GITHUB_SHA}\`. The plugin SDK is 0.x preview; host-side plugin loading ships in a future DMX Core 100 release."
+            --notes "Automatically packaged from \`${GITHUB_SHA}\`."

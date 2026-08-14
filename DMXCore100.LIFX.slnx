@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+    <File Path="pack.ps1" />
+    <File Path="pack.sh" />
+  </Folder>
+  <Project Path="src/DMXCore100.LIFX/DMXCore100.LIFX.csproj" />
+  <Project Path="tests/DMXCore100.LIFX.Tests/DMXCore100.LIFX.Tests.csproj" />
+  <Project Path="tools/DMXCore100.LIFX.DevHost/DMXCore100.LIFX.DevHost.csproj" />
+</Solution>

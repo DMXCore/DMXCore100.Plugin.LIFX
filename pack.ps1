@@ -4,9 +4,9 @@ $ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
 $publishDir = Join-Path $root 'artifacts/publish'
-$output = Join-Path $root 'artifacts/example-plugin.dmxplugin'
+$output = Join-Path $root 'artifacts/lifx-plugin.dmxplugin'
 
-dotnet publish (Join-Path $root 'src/DMXCore100.ExamplePlugin') --configuration Release --output $publishDir
+dotnet publish (Join-Path $root 'src/DMXCore100.LIFX') --configuration Release --output $publishDir
 
 if (Test-Path $output)
 {

@@ -1,72 +1,143 @@
-# DMX Core 100 Example Plugin
+# DMX Core 100 — LIFX Plugin
 
-A reference plugin for the [DMX Core 100](https://docs.dmxcore.com/dmx-core-100)
-lighting controller, demonstrating the full
-[`DMXCore.PluginSdk`](https://www.nuget.org/packages/DMXCore.PluginSdk) surface.
+Discovers LIFX fixtures on the LAN and drives colour, power, and effects over
+the [LIFX LAN protocol](https://lan.developer.lifx.com/). No LIFX cloud
+account — UDP on the local network only.
 
-> **Preview:** the plugin SDK contract is published, but host-side plugin
-> loading is shipping in a future DMX Core 100 release. This example compiles
-> and packs today; installing it on a device is not possible yet. The contract
-> is 0.x and may still change.
+## User guide
 
-## What it demonstrates
+### What you get
 
-[`ExamplePlugin.cs`](src/DMXCore100.ExamplePlugin/ExamplePlugin.cs) exercises
-every part of the SDK, with comments on when you'd use each piece:
+Once the plugin is running, LIFX lights on the same LAN can be discovered and
+controlled from DMX Core scripts, MQTT, or the DevHost console.
 
-| Feature | Where |
+| Capability | What it does |
 |---|---|
-| Declared settings (string/integer/boolean, defaults, masked secret) | `Info.Settings`, edited on the plugin's page in the device's web UI |
-| Reading settings + reacting to live edits | `host.Settings` getters, `OnChanged` |
-| Logging into the device logs | `host.Logger` (standard `ILogger`) |
-| MQTT subscribe (wildcards supported) | command topic → fires a trigger |
-| MQTT publish, including retained messages | heartbeat + last-cue status |
-| Firing input triggers (venue-configurable actions) | `host.Triggers.FireAsync` |
-| Cue playback events | `host.Playback.OnCueStarted` |
-| Periodic scheduling (non-overlapping) | `host.SchedulePeriodic` |
-| Persistent state across restarts | `host.GetStateJsonAsync` / `SetStateJsonAsync` |
+| Discovery | Finds bulbs, SuperColour tubes/Lunas, strips, and tiles; skips LIFX switches |
+| Colour | Sets RGB on a light or on `all`. Pixel fixtures get per-zone colour |
+| Effects | Chase, sinewave, rainbow, and pixel-chase |
+| Power | Turns lights on or off |
+| Trigger | Fires `LIFX-DISCOVERED` after a pass that found at least one light |
 
-## Building
+Known IPs from the last discovery are stored in the plugin state blob and
+probed first on the next run.
 
-Requires the .NET 10 SDK.
+### Setup
 
-```bash
-./pack.sh        # Linux/macOS
+Lights and the DMX Core must be on the same LAN (or have UDP 56700 routed
+between them).
+
+1. Web UI → **Settings → Remote Control**: enable the MQTT broker if you want
+   to send commands from scripts or another MQTT client.
+2. **Settings → Plugins**: enable **LIFX**.
+
+Optional settings:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| Bind IP | `0.0.0.0` | Local interface for LIFX UDP. Leave as-is unless you need a specific NIC |
+| Discover on startup | on | Broadcast-discover when the plugin starts |
+| Discovery timeout | 5 s | How long to wait for `GetService` replies |
+| Default fade | 45 ms | LIFX interpolation time for colour commands |
+| Default brightness | 100 % | Scales colour and effect output |
+
+### Commands
+
+`serial` is the device hardware id, lowercase.
+
+```
+dmxcore/{serial}/lifx/command          text or JSON commands
+dmxcore/{serial}/lifx/lights           retained discovered-light list
+dmxcore/{serial}/lifx/{lightId}/set    per-light colour / power / effect
+dmxcore/{serial}/lifx/{lightId}/state  retained colour + effect
 ```
 
-```powershell
-./pack.ps1       # Windows
+Text on the command topic:
+
+```
+discover
+list
+color all 255 0 0
+color Kitchen 0 128 255 50 200
+power all on
+effect all chase
+effect all sinewave 400
+effect all rainbow
+effect Tube pixel-chase
+effect all stop
 ```
 
-Either script publishes the project and produces
-`artifacts/example-plugin.dmxplugin` — a zip containing `manifest.json` and the
-plugin assemblies, which is the format the device's admin UI accepts for
-upload.
+`color` is `color <target> <r> <g> <b> [brightness] [fade_ms]`. Brightness is
+0–1, or 0–100 if the value is greater than 1. Target is `all`, a light label,
+an IP, or the hex id from the lights list.
 
-## Developing without a device
+JSON:
 
-Open `DMXCore100.ExamplePlugin.slnx` in Visual Studio:
+```json
+{"cmd":"color","target":"all","r":255,"g":0,"b":0,"brightness":1,"fade_ms":45}
+{"cmd":"effect","target":"all","name":"chase","speed_ms":400}
+{"cmd":"power","target":"all","on":true}
+{"cmd":"discover"}
+```
 
-- **DevHost** (`tools/`) — set as startup project and press F5 for an
-  interactive console harness built on
-  [`DMXCore.PluginSdk.Testing`](https://www.nuget.org/packages/DMXCore.PluginSdk.Testing):
-  simulate MQTT messages, cue events, and settings changes from the keyboard
-  and watch every action the plugin takes, no device needed.
-- **Tests** (`tests/`) — MSTest unit tests against `TestPluginHost`, showing
-  how to assert on fired triggers, published messages, and persisted state.
+Per-light `.../set` also accepts `ON` / `OFF` and a bare effect name
+(`chase`, `sinewave`, `rainbow`, `pixel-chase`, `stop`).
 
-## How plugins behave on the device
+From a DMX Core script:
 
-- Plugins run **in-process and fully trusted**; only device administrators can
-  install them.
-- Handlers and callbacks are dispatched serially per plugin; an exception
-  thrown from a handler is logged by the host and counted, but does not kill
-  the subscription. Repeatedly faulting plugins are disabled.
-- Plugin changes are **applied on device restart**; there is no hot reload.
-  Settings edits, by contrast, apply live via `OnChanged`.
-- The `DMXCore.PluginSdk` assemblies are provided by the host at runtime — the
-  project excludes them from the build output (`ExcludeAssets="runtime"`), so
-  they must not be shipped inside the `.dmxplugin`.
+```javascript
+dmx.mqtt.publish("dmxcore/" + /* device serial */ + "/lifx/command", "color all 255 80 0");
+```
+
+Or map the **Lights discovered** plugin trigger (`LIFX-DISCOVERED`) in the
+normal trigger UI.
+
+### Ideas
+
+- **Warm wash:** a custom-menu button that publishes `color all 255 140 40`.
+- **Show start:** a cue-started script that runs `effect all chase`, and a
+  cue-ended script that runs `effect all stop` then `color all 0 0 0`.
+- **Pixel check:** `effect Tube rainbow` or `effect Tube pixel-chase` to
+  confirm SuperColour mapping without a console.
+- **Presence:** when the venue closes, `power all off`.
+
+### Troubleshooting
+
+- **No lights found:** confirm the fixtures are powered and on the same
+  subnet. Try a specific **Bind IP** if the device has more than one NIC,
+  then publish `discover` again.
+- **Commands do nothing:** the plugin needs at least one successful
+  discovery first. Check `dmxcore/{serial}/lifx/lights` for the current
+  list, and that MQTT is connected (Settings → Remote Control).
+- **Wrong light:** target by label, IP, or the hex `id` from the lights
+  payload — `all` hits every discovered fixture.
+- **Steppy colour:** raise **Default fade** (try 60 ms). Chase and
+  sinewave send on a timer; rainbow on a zone fixture paints every pixel
+  in one pass.
+
+## Development
+
+```
+dotnet test tests/DMXCore100.LIFX.Tests
+./pack.sh            # or pack.ps1 — produces artifacts/lifx-plugin.dmxplugin
+```
+
+`tools/DMXCore100.LIFX.DevHost` is an interactive console harness (F5 in
+Visual Studio) against an in-memory host. Discovery and colour commands use
+the real LAN client, so you can talk to bulbs on your network without a
+device.
+
+```
+discover
+color all 255 0 0
+effect all chase
+effect all stop
+d                    # dump published lights / triggers
+```
+
+Every push to `main` recreates the rolling `latest` release carrying the
+packed `.dmxplugin`; the DMX Core 100 product build downloads it from there
+and bundles it as a built-in plugin.
 
 ## License
 
