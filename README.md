@@ -84,18 +84,6 @@ The fixture must be visible to the plugin as entity `fixture.YOURCODE` (or
 the bare code) with `dmx.getFixture` levels (`red` / `green` / `blue` /
 `intensity`, 0–1).
 
-### Custom menu
-
-Import [`samples/Custom Menus/LIFX.json`](samples/Custom%20Menus/LIFX.json)
-under **Device → Custom Menus**. The file matches the host
-[custom menu samples](https://github.com/DMXCore/DmxCore100/tree/main/samples/Custom%20Menus):
-looks, effects, identify, off, and a master-dimmer slider.
-
-Custom menus have no MQTT item type, so the buttons play cues (`WARM`,
-`PARTY`, `BLACK`, …). Create those cue codes on the device and program the
-followed fixture in each cue (or drive it from Fixture Control). Turn on
-**Follow master dimmer** if the slider should scale LIFX brightness.
-
 ### Commands
 
 `serial` is the device hardware id, lowercase.
@@ -160,8 +148,7 @@ normal trigger UI.
   fixture**, and program that fixture in your cues / Fixture Control. Turn
   on **Follow master dimmer** if house LIFX should also track the grand
   master.
-- **Warm wash:** import the [LIFX custom menu](samples/Custom%20Menus/LIFX.json)
-  and tap **Warm wash**, or publish `color all 255 140 40` from a script.
+- **Warm wash:** publish `color all 255 140 40` from a script.
 - **Pixel check:** `effect Tube rainbow` or `effect Tube pixel-chase` to
   confirm SuperColour mapping without a console.
 - **Presence:** when the venue closes, `power all off`.

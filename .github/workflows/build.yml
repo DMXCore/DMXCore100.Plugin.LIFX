@@ -24,9 +24,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0.x
 
@@ -47,9 +49,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0.x
 
@@ -69,7 +73,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: lifx-plugin
           path: artifacts
@@ -85,8 +89,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tmp_tag="latest-next"
+          tmp_tag="latest-next-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           notes="Automatically packaged from \`${GITHUB_SHA}\`."
+          cleanup_tmp() {
+            gh release delete "$tmp_tag" --cleanup-tag --yes || true
+          }
+          trap cleanup_tmp EXIT
 
           # Publish under a temporary tag first so the existing latest
           # release stays downloadable until the new assets are up.
@@ -120,8 +128,7 @@ jobs:
           # downloads it with DownloadGitHubRelease's "latest release" mode,
           # which skips prereleases.
           if ! promote; then
-            promote || true
-            exit 1
+            promote || exit 1
           fi
 
           gh release delete "$tmp_tag" --cleanup-tag --yes

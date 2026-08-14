@@ -70,6 +70,25 @@ public class LifxProtocolTests
     }
 
     [TestMethod]
+    public void Set64_ElevenByNine_WritesChunkGeometry()
+    {
+        Hsbk[] colors = Enumerable.Repeat(new Hsbk(1, 2, 3, 3500), 11 * 9).ToArray();
+        IReadOnlyList<byte[]> packets = Packets().BuildSet64Packets(new byte[8], colors, 11, 9, 20);
+        (int X, int Y, int Width)[] expected =
+        [
+            (0, 0, 11),
+            (0, 5, 11),
+        ];
+
+        Assert.AreEqual(expected.Length, packets.Count);
+        for (int i = 0; i < expected.Length; i++)
+        {
+            Assert.AreEqual(LifxConstants.Set64, LifxPackets.ReadMessageType(packets[i]));
+            Assert.AreEqual(expected[i], Set64Geometry(packets[i]));
+        }
+    }
+
+    [TestMethod]
     public void ExtendedMultizone_PacketSize()
     {
         Hsbk[] colors = Enumerable.Repeat(new Hsbk(1, 2, 3, 3500), 10).ToArray();
@@ -144,5 +163,11 @@ public class LifxProtocolTests
         Assert.AreEqual(LifxConstants.GetService, LifxPackets.ReadMessageType(packet));
         ushort frameBits = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(2, 2));
         Assert.AreEqual(1, (frameBits >> 13) & 1);
+    }
+
+    private static (int X, int Y, int Width) Set64Geometry(byte[] packet)
+    {
+        int o = LifxConstants.HeaderSize;
+        return (packet[o + 3], packet[o + 4], packet[o + 5]);
     }
 }

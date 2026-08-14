@@ -95,12 +95,11 @@ public static class LifxFixtureFollow
             return false;
         }
 
-        if (brightness > 1.0)
-        {
-            brightness /= 100.0;
-        }
-
-        color = new LifxLook.Color(Math.Clamp(r, 0, 255), Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255), LifxColor.Clamp01(brightness));
+        color = new LifxLook.Color(
+            Math.Clamp(r, 0, 255),
+            Math.Clamp(g, 0, 255),
+            Math.Clamp(b, 0, 255),
+            LifxColor.NormaliseBrightness(brightness));
         return true;
     }
 
@@ -139,14 +138,14 @@ public static class LifxFixtureFollow
             double intensity = 1.0;
             if (TryChannel(root, out double parsedIntensity, "intensity", "brightness", "level"))
             {
-                intensity = parsedIntensity > 1.0 ? parsedIntensity / 100.0 : parsedIntensity;
+                intensity = parsedIntensity;
             }
 
             color = new LifxLook.Color(
                 ToByte(red),
                 ToByte(green),
                 ToByte(blue),
-                LifxColor.Clamp01(intensity));
+                LifxColor.NormaliseBrightness(intensity));
             return true;
         }
         catch (JsonException)

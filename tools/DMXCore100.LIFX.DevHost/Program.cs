@@ -1,3 +1,4 @@
+using System.Globalization;
 using DMXCore.PluginSdk.Testing;
 using DMXCore100.LIFX;
 
@@ -27,15 +28,7 @@ try
     while (running && !cts.IsCancellationRequested)
     {
         Console.Write("> ");
-        string? input;
-        try
-        {
-            input = Console.ReadLine()?.Trim();
-        }
-        catch (OperationCanceledException)
-        {
-            break;
-        }
+        string? input = Console.ReadLine()?.Trim();
 
         if (input == null || cts.IsCancellationRequested)
         {
@@ -86,7 +79,16 @@ try
                     double fixtureBrightness = 1.0;
                     if (fixtureParts.Length > 4)
                     {
-                        _ = double.TryParse(fixtureParts[4], out fixtureBrightness);
+                        if (!double.TryParse(
+                            fixtureParts[4],
+                            NumberStyles.Float,
+                            CultureInfo.InvariantCulture,
+                            out fixtureBrightness))
+                        {
+                            Console.WriteLine("usage: fixture <code> <r> <g> <b> [brightness]");
+                            break;
+                        }
+
                         if (fixtureBrightness > 1.0)
                         {
                             fixtureBrightness /= 100.0;

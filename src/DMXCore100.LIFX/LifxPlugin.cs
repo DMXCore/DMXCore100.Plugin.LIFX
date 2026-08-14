@@ -394,6 +394,9 @@ public class LifxPlugin : IPlugin
         {
             await this.host.Triggers.FireAsync(DiscoveredTrigger, cancellationToken);
         }
+
+        this.lastFollowedColor = null;
+        await ApplyFollowedFixtureAsync(cancellationToken);
     }
 
     private async Task ProbePersisted(string ip, CancellationToken cancellationToken)

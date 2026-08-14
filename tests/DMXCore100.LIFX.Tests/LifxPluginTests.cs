@@ -254,6 +254,29 @@ public class LifxPluginTests
     }
 
     [TestMethod]
+    public async Task FollowFixture_ReappliesAfterDiscovery()
+    {
+        var (_, host, client) = await CreateInitializedAsync((h, _) =>
+        {
+            h.SetSetting(LifxPlugin.FollowFixtureKey, "HOUSE");
+            h.EntityStates["fixture.HOUSE"] = new PluginEntityState
+            {
+                Code = "fixture.HOUSE",
+                Text = """{"red":1,"green":0,"blue":0,"intensity":1}""",
+            };
+        });
+
+        Assert.AreEqual(1, client.Colors.Count);
+        client.Reset();
+
+        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic("test-serial"), "discover");
+
+        Assert.AreEqual(1, client.DiscoverCalls);
+        Assert.AreEqual(1, client.Colors.Count);
+        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
+    }
+
+    [TestMethod]
     public async Task FollowFixture_AppliesEntityColour()
     {
         var (_, host, client) = await CreateInitializedAsync((h, _) =>

@@ -127,6 +127,7 @@ internal sealed class FakeLifxClient : ILifxLanClient
     {
         lock (this.gate)
         {
+            EnsurePowered(light);
             ApplyColor(light, r, g, b, kelvin, brightness);
             this.colors.Add(new ColorCall(light.Id, r, g, b, kelvin, durationMs, brightness));
         }
@@ -136,6 +137,7 @@ internal sealed class FakeLifxClient : ILifxLanClient
     {
         lock (this.gate)
         {
+            EnsurePowered(light);
             this.zones.Add(new ZoneCall(light.Id, zones.Count, kelvin, durationMs, brightness));
             if (zones.Count > 0)
             {
@@ -148,15 +150,31 @@ internal sealed class FakeLifxClient : ILifxLanClient
     {
         lock (this.gate)
         {
-            light.Power = on ? 65535 : 0;
-            this.powers.Add((light.Id, on));
+            WritePower(light, on);
         }
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private static void ApplyColor(LifxLight light, double r, double g, double b, int kelvin, double brightness)
+    private void EnsurePowered(LifxLight light)
     {
+        if (light.Power != 0)
+        {
+            return;
+        }
+
+        WritePower(light, true);
+    }
+
+    private void WritePower(LifxLight light, bool on)
+    {
+        light.Power = on ? 65535 : 0;
+        this.powers.Add((light.Id, on));
+    }
+
+    private void ApplyColor(LifxLight light, double r, double g, double b, int kelvin, double brightness)
+    {
+        EnsurePowered(light);
         Hsbk color = LifxColor.ScaleBrightness(LifxColor.RgbToHsbk(r, g, b, kelvin, light.CurrentHue), brightness);
         light.CurrentHue = color.Hue;
         light.CurrentSaturation = color.Saturation;

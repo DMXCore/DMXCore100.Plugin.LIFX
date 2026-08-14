@@ -8,7 +8,9 @@ namespace DMXCore100.LIFX;
 
 /// <summary>
 /// LIFX LAN UDP client: broadcast discovery, SET_COLOR / SET_POWER, and
-/// multizone packets for SuperColour / strip / tile fixtures.
+/// multizone packets for SuperColour / strip / tile fixtures. A
+/// non-recoverable listen <see cref="SocketException"/> stops the receive
+/// loop; restart the plugin to recover.
 /// </summary>
 public sealed class LifxLanClient : ILifxLanClient
 {
@@ -23,6 +25,7 @@ public sealed class LifxLanClient : ILifxLanClient
     private readonly Action<Exception>? onListenFailure;
     private int sequence;
     private int disposed;
+    private int listenFailed;
 
     public LifxLanClient(string bindIp = "0.0.0.0", Action<Exception>? onListenFailure = null)
     {
@@ -170,7 +173,7 @@ public sealed class LifxLanClient : ILifxLanClient
         catch (OperationCanceledException)
         {
         }
-        catch (SocketException)
+        catch (Exception)
         {
         }
 
@@ -216,6 +219,11 @@ public sealed class LifxLanClient : ILifxLanClient
 
     private void Send(byte[] packet, IPAddress ip)
     {
+        if (Volatile.Read(ref this.listenFailed) != 0)
+        {
+            throw new InvalidOperationException("LIFX listen stopped; restart the plugin to recover.");
+        }
+
         lock (this.sendGate)
         {
             this.udp.Send(packet, packet.Length, new IPEndPoint(ip, LifxConstants.Port));
@@ -254,7 +262,11 @@ public sealed class LifxLanClient : ILifxLanClient
             }
             catch (SocketException ex)
             {
-                this.onListenFailure?.Invoke(ex);
+                // Non-recoverable: the receive loop stops. Recreating the
+                // bound UDP socket here is unsafe while Send still uses it;
+                // restart the plugin to recover.
+                Interlocked.Exchange(ref this.listenFailed, 1);
+                NotifyListenFailure(ex);
                 break;
             }
 
@@ -334,6 +346,17 @@ public sealed class LifxLanClient : ILifxLanClient
                 break;
             default:
                 break;
+        }
+    }
+
+    private void NotifyListenFailure(Exception ex)
+    {
+        try
+        {
+            this.onListenFailure?.Invoke(ex);
+        }
+        catch
+        {
         }
     }
 
