@@ -16,9 +16,14 @@ public class LifxPlugin : IPlugin
     public const string ColorProfileCode = "LIFX_COLOR";
     public const string PortType = "LIFX";
 
+    private static readonly TimeSpan PersistTimeout = TimeSpan.FromSeconds(5);
+
     private readonly List<IDisposable> registrations = [];
     private readonly LifxDiscoverFunc? discoverOverride;
     private readonly LifxDatagramSender? sendOverride;
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly object persistGate = new();
+    private Task persistInFlight = Task.CompletedTask;
 
     public LifxPlugin()
         : this(null, null)
@@ -51,17 +56,19 @@ public class LifxPlugin : IPlugin
         // geometry survive restarts; every completed scan refreshes the blob
         discovery.Seed(LifxLightState.Deserialize(await host.GetStateJsonAsync(cancellationToken)));
         var persistWrites = new SemaphoreSlim(1, 1);
-        discovery.ScanCompleted = async lights =>
+        discovery.ScanCompleted = lights =>
         {
             string json = LifxLightState.Serialize(lights);
-            await persistWrites.WaitAsync();
-            try
+            lock (this.persistGate)
             {
-                await host.SetStateJsonAsync(json, CancellationToken.None);
-            }
-            finally
-            {
-                persistWrites.Release();
+                if (this.lifetime.IsCancellationRequested)
+                {
+                    return Task.FromCanceled(this.lifetime.Token);
+                }
+
+                Task persist = this.PersistStateAsync(host, persistWrites, json);
+                this.persistInFlight = persist;
+                return persist;
             }
         };
 
@@ -111,15 +118,44 @@ public class LifxPlugin : IPlugin
         host.SetConnectionState(true, "LIFX output ready");
     }
 
-    public Task ShutdownAsync(CancellationToken cancellationToken)
+    public async Task ShutdownAsync(CancellationToken cancellationToken)
     {
+        Task inFlight;
+        lock (this.persistGate)
+        {
+            this.lifetime.Cancel();
+            inFlight = this.persistInFlight;
+        }
+
+        try
+        {
+            await inFlight;
+        }
+        catch (Exception)
+        {
+        }
+
         foreach (IDisposable registration in this.registrations)
         {
             registration.Dispose();
         }
 
         this.registrations.Clear();
-        return Task.CompletedTask;
+    }
+
+    private async Task PersistStateAsync(IPluginHost host, SemaphoreSlim persistWrites, string json)
+    {
+        using var persistCts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
+        persistCts.CancelAfter(PersistTimeout);
+        await persistWrites.WaitAsync(persistCts.Token);
+        try
+        {
+            await host.SetStateJsonAsync(json, persistCts.Token);
+        }
+        finally
+        {
+            persistWrites.Release();
+        }
     }
 
     private static OutputProtocolDescriptor PixelDescriptor() =>
