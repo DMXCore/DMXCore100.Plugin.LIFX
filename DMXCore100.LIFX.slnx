@@ -3,6 +3,8 @@
     <File Path="README.md" />
     <File Path="pack.ps1" />
     <File Path="pack.sh" />
+    <File Path="deploy-dev.ps1" />
+    <File Path="LICENSE" />
   </Folder>
   <Project Path="src/DMXCore100.LIFX/DMXCore100.LIFX.csproj" />
   <Project Path="tests/DMXCore100.LIFX.Tests/DMXCore100.LIFX.Tests.csproj" />

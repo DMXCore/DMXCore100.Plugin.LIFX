@@ -1,6 +1,6 @@
 namespace DMXCore100.LIFX;
 
-public enum LifxLayout
+internal enum LifxLayout
 {
     Single,
     Linear,

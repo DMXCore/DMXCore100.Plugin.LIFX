@@ -3,9 +3,10 @@ using System.Buffers.Binary;
 namespace DMXCore100.LIFX;
 
 /// <summary>
-/// LIFX LAN frame builder/parser. Packet layouts match the working DMX2LIFX client.
+/// LIFX LAN frames for discovery, single-zone SetColor, and pixel
+/// (multizone / Set64) output.
 /// </summary>
-public sealed class LifxPackets
+internal sealed class LifxPackets
 {
     private readonly uint source;
     private readonly Func<byte> nextSequence;
@@ -16,58 +17,15 @@ public sealed class LifxPackets
         this.nextSequence = nextSequence;
     }
 
-    public byte[] Header(ushort msgType, byte[]? target = null, bool tagged = false)
-    {
-        const int addressable = 1;
-        const int origin = 0;
-        int frameBits =
-            (LifxConstants.Protocol & 0x0FFF)
-            | (addressable << 12)
-            | ((tagged ? 1 : 0) << 13)
-            | (origin << 14);
-
-        byte[] packet = new byte[LifxConstants.HeaderSize];
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(0, 2), LifxConstants.HeaderSize);
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2, 2), (ushort)frameBits);
-        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4, 4), this.source);
-
-        if (target is { Length: 8 })
-        {
-            target.CopyTo(packet, 8);
-        }
-
-        packet[23] = this.nextSequence();
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(32, 2), msgType);
-        return packet;
-    }
-
-    public static byte[] Finalise(byte[] packet)
-    {
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(0, 2), (ushort)packet.Length);
-        return packet;
-    }
-
     public byte[] GetService() => Finalise(Header(LifxConstants.GetService, tagged: true));
 
     public byte[] GetLabel(byte[] target) => Finalise(Header(LifxConstants.GetLabel, target));
 
     public byte[] GetVersion(byte[] target) => Finalise(Header(LifxConstants.GetVersion, target));
 
-    public byte[] GetLightState(byte[] target) => Finalise(Header(LifxConstants.GetLightState, target));
-
     public byte[] GetDeviceChain(byte[] target) => Finalise(Header(LifxConstants.GetDeviceChain, target));
 
     public byte[] GetExtendedColorZones(byte[] target) => Finalise(Header(LifxConstants.GetExtendedColorZones, target));
-
-    public byte[] GetColorZones(byte[] target)
-    {
-        byte[] header = Header(LifxConstants.GetColorZones, target);
-        byte[] packet = new byte[header.Length + 2];
-        header.CopyTo(packet, 0);
-        packet[header.Length] = 0;
-        packet[header.Length + 1] = 255;
-        return Finalise(packet);
-    }
 
     public byte[] SetPower(byte[] target, bool on)
     {
@@ -93,22 +51,22 @@ public sealed class LifxPackets
         return Finalise(packet);
     }
 
-    public IReadOnlyList<byte[]> ZonePackets(LifxLight light, IReadOnlyList<Hsbk> colors, int durationMs)
-    {
-        if (light.EffectiveLayout == LifxLayout.Matrix)
+    public IReadOnlyList<byte[]> ZonePackets(LifxLight light, IReadOnlyList<Hsbk> colors, int durationMs) =>
+        light.EffectiveLayout switch
         {
-            return BuildMatrixPackets(light, colors, durationMs);
-        }
+            LifxLayout.Matrix => BuildMatrixPackets(light, colors, durationMs),
+            LifxLayout.Linear => BuildExtendedMzPackets(light.Target, colors, durationMs),
+            LifxLayout.Single => throw Unexpected(light.EffectiveLayout),
+            _ => throw Unexpected(light.EffectiveLayout),
+        };
 
-        if (LifxProducts.UsesExtendedMultizone((int)light.Product))
-        {
-            return BuildExtendedMzPackets(light.Target, colors, durationMs);
-        }
-
-        return BuildLegacyMzPackets(light.Target, colors, durationMs);
-    }
-
-    public IReadOnlyList<byte[]> BuildSet64Packets(byte[] target, IReadOnlyList<Hsbk> colors, int width, int height, int durationMs, int tileIndex = 0)
+    public IReadOnlyList<byte[]> BuildSet64Packets(
+        byte[] target,
+        IReadOnlyList<Hsbk> colors,
+        int width,
+        int height,
+        int durationMs,
+        int tileIndex = 0)
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
@@ -187,51 +145,6 @@ public sealed class LifxPackets
         return packets;
     }
 
-    public IReadOnlyList<byte[]> BuildLegacyMzPackets(byte[] target, IReadOnlyList<Hsbk> colors, int durationMs)
-    {
-        if (colors.Count == 0)
-        {
-            return [];
-        }
-
-        var runs = new List<(int Start, int End, Hsbk Color)>();
-        int start = 0;
-        Hsbk current = colors[0];
-        for (int i = 1; i < colors.Count; i++)
-        {
-            if (colors[i] != current)
-            {
-                runs.Add((start, i - 1, current));
-                start = i;
-                current = colors[i];
-            }
-        }
-
-        runs.Add((start, colors.Count - 1, current));
-
-        var packets = new List<byte[]>();
-        for (int runIndex = 0; runIndex < runs.Count; runIndex++)
-        {
-            (int runStart, int runEnd, Hsbk color) = runs[runIndex];
-            byte apply = runIndex == runs.Count - 1 ? LifxConstants.MultiZoneApply : LifxConstants.MultiZoneNoApply;
-            byte[] header = Header(LifxConstants.SetColorZones, target);
-            byte[] packet = new byte[header.Length + 15];
-            header.CopyTo(packet, 0);
-            int o = header.Length;
-            packet[o] = (byte)(runStart & 0xFF);
-            packet[o + 1] = (byte)(runEnd & 0xFF);
-            BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 2, 2), color.Hue);
-            BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 4, 2), color.Saturation);
-            BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 6, 2), color.Brightness);
-            BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 8, 2), color.Kelvin);
-            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(o + 10, 4), (uint)durationMs);
-            packet[o + 14] = apply;
-            packets.Add(Finalise(packet));
-        }
-
-        return packets;
-    }
-
     public static bool TryReadHeader(ReadOnlySpan<byte> data, out uint source, out byte[] target, out ushort msgType)
     {
         source = 0;
@@ -291,14 +204,6 @@ public sealed class LifxPackets
                 }
 
                 break;
-            case LifxConstants.StateMultizone:
-            case LifxConstants.StateZone:
-                if (payload.Length >= 1)
-                {
-                    zoneCount = payload[0];
-                }
-
-                break;
             default:
                 return;
         }
@@ -321,6 +226,14 @@ public sealed class LifxPackets
 
         return BinaryPrimitives.ReadUInt16LittleEndian(packet.Slice(32, 2));
     }
+
+    public byte[]? GeometryRequest(LifxLight light) => light.EffectiveLayout switch
+    {
+        LifxLayout.Matrix => GetDeviceChain(light.Target),
+        LifxLayout.Linear => GetExtendedColorZones(light.Target),
+        LifxLayout.Single => null,
+        _ => throw Unexpected(light.EffectiveLayout),
+    };
 
     private IReadOnlyList<byte[]> BuildMatrixPackets(LifxLight light, IReadOnlyList<Hsbk> colors, int durationMs)
     {
@@ -374,4 +287,38 @@ public sealed class LifxPackets
             }
         }
     }
+
+    private byte[] Header(ushort msgType, byte[]? target = null, bool tagged = false)
+    {
+        const int addressable = 1;
+        const int origin = 0;
+        int frameBits =
+            (LifxConstants.Protocol & 0x0FFF)
+            | (addressable << 12)
+            | ((tagged ? 1 : 0) << 13)
+            | (origin << 14);
+
+        byte[] packet = new byte[LifxConstants.HeaderSize];
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(0, 2), LifxConstants.HeaderSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2, 2), (ushort)frameBits);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4, 4), this.source);
+
+        if (target is { Length: 8 })
+        {
+            target.CopyTo(packet, 8);
+        }
+
+        packet[23] = this.nextSequence();
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(32, 2), msgType);
+        return packet;
+    }
+
+    private static byte[] Finalise(byte[] packet)
+    {
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(0, 2), (ushort)packet.Length);
+        return packet;
+    }
+
+    private static InvalidOperationException Unexpected(LifxLayout layout) =>
+        new($"Unhandled layout {layout}");
 }

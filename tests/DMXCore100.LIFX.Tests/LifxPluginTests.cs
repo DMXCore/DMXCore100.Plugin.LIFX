@@ -1,4 +1,5 @@
-using System.Text.Json;
+using System.Buffers.Binary;
+using System.Net;
 using DMXCore.PluginSdk;
 using DMXCore.PluginSdk.Testing;
 
@@ -20,435 +21,479 @@ public class LifxPluginTests
         this.plugins.Clear();
     }
 
-    private async Task<(LifxPlugin Plugin, TestPluginHost Host, FakeLifxClient Client)> CreateInitializedAsync(
-        Action<TestPluginHost, FakeLifxClient>? configure = null)
+    private async Task<(LifxPlugin Plugin, TestPluginHost Host, List<(IPEndPoint Endpoint, byte[] Packet)> Sent)> CreateInitializedAsync(
+        IReadOnlyList<LifxLight>? discovered = null)
     {
-        var client = new FakeLifxClient();
-        var kitchen = new LifxLight([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
-        {
-            ModelName = "LIFX A19",
-            Product = 27,
-            Power = 65535,
-        };
-        client.AddLight(kitchen);
+        var sent = new List<(IPEndPoint, byte[])>();
+        LifxLight[] lights = discovered?.ToArray() ??
+        [
+            new LifxLight([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
+            {
+                ModelName = "LIFX A19",
+                Product = 72,
+            },
+        ];
 
-        var plugin = new LifxPlugin(_ => client);
+        var plugin = new LifxPlugin(
+            (_, _) => Task.FromResult<IReadOnlyList<LifxLight>>(lights),
+            (endpoint, packet, _) =>
+            {
+                sent.Add((endpoint, packet.ToArray()));
+                return ValueTask.CompletedTask;
+            });
         this.plugins.Add(plugin);
         var host = new TestPluginHost(plugin.Info, logOutput: _ => { });
-        host.SetSetting(LifxPlugin.AutoDiscoverKey, "false");
-        configure?.Invoke(host, client);
-
         await plugin.InitializeAsync(host, CancellationToken.None);
-        return (plugin, host, client);
-    }
-
-    private static async Task WaitForAsync(Func<bool> condition, string failure)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        try
-        {
-            while (!condition())
-            {
-                await Task.Delay(20, timeout.Token);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            Assert.Fail(failure);
-        }
-    }
-
-    private static string Serial(TestPluginHost host) =>
-        host.DeviceInfo.Serial.ToLowerInvariant();
-
-    private static (string Topic, string Payload, bool Retain)? FindPublished(TestPluginHost host, string topic) =>
-        host.PublishedMessages.Where(x => x.Topic == topic).Select(x => ((string, string, bool)?)x).LastOrDefault();
-
-    [TestMethod]
-    public async Task Discover_PublishesLightsAndFiresTrigger()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-
-        Assert.AreEqual(1, client.DiscoverCalls);
-        Assert.AreEqual(LifxPlugin.DiscoveredTrigger, host.FiredTriggers.Single());
-
-        var message = FindPublished(host, LifxStatus.LightsTopic(Serial(host)));
-        Assert.IsNotNull(message);
-        Assert.IsTrue(message.Value.Retain);
-        using var doc = JsonDocument.Parse(message.Value.Payload);
-        Assert.AreEqual(1, doc.RootElement.GetProperty("count").GetInt32());
-        Assert.AreEqual("Kitchen", doc.RootElement.GetProperty("lights")[0].GetProperty("label").GetString());
+        return (plugin, host, sent);
     }
 
     [TestMethod]
-    public async Task ColorCommand_SendsRgbAndPublishesState()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-        host.PublishedMessages.Clear();
-
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "color all 255 0 0");
-
-        Assert.AreEqual(1, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
-        Assert.AreEqual(0.0, client.Colors[0].G, 1e-9);
-        Assert.AreEqual(45, client.Colors[0].DurationMs);
-
-        var state = FindPublished(host, LifxStatus.LightStateTopic(Serial(host), client.Lights[0].Id));
-        Assert.IsNotNull(state);
-        using var doc = JsonDocument.Parse(state.Value.Payload);
-        Assert.AreEqual(255, doc.RootElement.GetProperty("r").GetInt32());
-        Assert.AreEqual("none", doc.RootElement.GetProperty("effect").GetString());
-    }
-
-    [TestMethod]
-    public async Task PowerCommand_TurnsLightOff()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "power Kitchen off");
-
-        Assert.AreEqual((client.Lights[0].Id, false), client.Powers.Single());
-        Assert.AreEqual(0, client.Lights[0].Power);
-    }
-
-    [TestMethod]
-    public async Task PerLightSet_OnOff()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-        string id = client.Lights[0].Id;
-
-        await host.SimulateMqttMessageAsync(LifxStatus.LightSetTopic(Serial(host), id), "OFF");
-
-        Assert.AreEqual(false, client.Powers.Single().On);
-    }
-
-    [TestMethod]
-    public async Task JsonColor_UsesFadeAndBrightness()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-
-        await host.SimulateMqttMessageAsync(
-            LifxStatus.CommandTopic(Serial(host)),
-            """{"cmd":"color","target":"all","r":0,"g":255,"b":0,"brightness":0.5,"fade_ms":120}""");
-
-        Assert.AreEqual(0.5, client.Colors.Single().Brightness, 1e-9);
-        Assert.AreEqual(120, client.Colors.Single().DurationMs);
-    }
-
-    [TestMethod]
-    public async Task EffectCommand_PublishesEffectField()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-        host.PublishedMessages.Clear();
-
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "effect all chase");
-
-        var state = FindPublished(host, LifxStatus.LightStateTopic(Serial(host), client.Lights[0].Id));
-        Assert.IsNotNull(state);
-        using var doc = JsonDocument.Parse(state.Value.Payload);
-        Assert.AreEqual("chase", doc.RootElement.GetProperty("effect").GetString());
-    }
-
-    [TestMethod]
-    public async Task UnknownCommand_DoesNotThrow()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "nope");
-
-        Assert.AreEqual(0, client.Colors.Count);
-        Assert.AreEqual(0, client.DiscoverCalls);
-    }
-
-    [TestMethod]
-    public async Task Reconnect_RepublishesLights()
+    public async Task Initialize_RegistersColorProtocolsAndProfile()
     {
         var (_, host, _) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-        host.PublishedMessages.Clear();
 
-        await host.SimulateMqttConnectionChangedAsync(false);
-        await host.SimulateMqttConnectionChangedAsync(true);
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorCtProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.PixelProtocolId));
+        Assert.IsTrue(host.FixtureProfiles.ContainsKey(LifxPlugin.ColorProfileCode));
+        Assert.AreEqual(true, host.ConnectionState);
+        Assert.AreEqual("LIFX output ready", host.ConnectionDetail);
 
-        Assert.IsNotNull(FindPublished(host, LifxStatus.LightsTopic(Serial(host))));
-    }
+        OutputProtocolDescriptor color = host.OutputProtocols[LifxPlugin.ColorProtocolId].Descriptor;
+        Assert.AreEqual(LifxPlugin.PortType, color.PortType);
+        Assert.AreEqual(LifxConstants.MaxUpdatesPerSecond, color.MaxUpdatesPerSecond);
+        Assert.IsTrue(color.SupportsDestinationDiscovery);
+        Assert.AreEqual(LifxPlugin.ColorProfileCode, color.SuggestedProfileCode);
+        Assert.AreEqual("RGB", color.SuggestedPersonality);
+        Assert.AreEqual("RGB+CT", host.OutputProtocols[LifxPlugin.ColorCtProtocolId].Descriptor.SuggestedPersonality);
 
-    [TestMethod]
-    public async Task PersistedLights_AreProbedOnDiscover()
-    {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.StateJson = """{"Lights":[{"Id":"aabb","Ip":"10.0.0.9","Label":"Saved","Product":27}]}""";
-        });
+        OutputProtocolDescriptor pixel = host.OutputProtocols[LifxPlugin.PixelProtocolId].Descriptor;
+        Assert.AreEqual(LifxPlugin.PortType, pixel.PortType);
+        Assert.IsTrue(pixel.SupportsDestinationDiscovery);
+        Assert.IsTrue(string.IsNullOrEmpty(pixel.SuggestedProfileCode));
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-
-        Assert.IsTrue(client.Probes.Contains("10.0.0.9"));
-    }
-
-    [TestMethod]
-    public async Task Shutdown_DisposesSubscriptions()
-    {
-        var (plugin, host, client) = await CreateInitializedAsync();
-
-        await plugin.ShutdownAsync(CancellationToken.None);
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-
-        Assert.AreEqual(0, client.DiscoverCalls);
-    }
-
-    [TestMethod]
-    public void Settings_HaveNoBindIpAndIncludeLightSlots()
-    {
-        var plugin = new LifxPlugin(_ => new FakeLifxClient());
-
-        CollectionAssert.DoesNotContain(plugin.Info.Settings.Select(x => x.Key).ToArray(), "bind-ip");
-        Assert.IsTrue(plugin.Info.Settings.Any(x => x.Key == LifxPlugin.DiscoverNowKey));
-        Assert.IsTrue(plugin.Info.Settings.Any(x => x.Key == LifxPlugin.LightSlotKey(1)));
-        Assert.IsTrue(plugin.Info.Settings.Any(x => x.Key == LifxPlugin.FollowFixtureKey));
-        Assert.IsTrue(plugin.Info.Settings.Any(x => x.Key == LifxPlugin.IdentifyKey));
-        Assert.IsTrue(plugin.Info.Settings.Any(x => x.Key == LifxPlugin.FollowMasterKey));
-        Assert.AreEqual(LifxPlugin.LightSlotCount, plugin.Info.Settings.Count(x => x.Key.StartsWith("light-", StringComparison.Ordinal)));
-    }
-
-    [TestMethod]
-    public async Task DiscoverNow_ScansAndMapsSlots()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-
-        host.SetSetting(LifxPlugin.DiscoverNowKey, "true");
-        await host.TriggerSettingsChangedAsync();
-        await WaitForAsync(
-            () => client.DiscoverCalls >= 1 && host.FiredTriggers.Contains(LifxPlugin.DiscoveredTrigger),
-            "discovery did not finish");
-
-        Assert.AreEqual(1, client.DiscoverCalls);
-        Assert.AreEqual(LifxPlugin.DiscoveredTrigger, host.FiredTriggers.Single());
-    }
-
-    [TestMethod]
-    public async Task LightSlotToggle_SendsTestColour()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-        client.Reset();
-
-        host.SetSetting(LifxPlugin.LightSlotKey(1), "true");
-        await host.TriggerSettingsChangedAsync();
-
-        Assert.AreEqual(1, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
-        Assert.AreEqual(80 / 255.0, client.Colors[0].G, 1e-3);
-        Assert.AreEqual(0.0, client.Colors[0].B, 1e-9);
-    }
-
-    [TestMethod]
-    public async Task FadeChange_DoesNotRediscover()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-
-        host.SetSetting(LifxPlugin.FadeMsKey, "90");
-        await host.TriggerSettingsChangedAsync();
-
-        Assert.AreEqual(0, client.DiscoverCalls);
-    }
-
-    [TestMethod]
-    public async Task FollowFixture_ReappliesAfterDiscovery()
-    {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.SetSetting(LifxPlugin.FollowFixtureKey, "HOUSE");
-            h.EntityStates["fixture.HOUSE"] = new PluginEntityState
+        PluginFixtureProfileDescriptor profile = host.FixtureProfiles[LifxPlugin.ColorProfileCode];
+        Assert.AreEqual("LIFX", profile.Manufacturer);
+        Assert.AreEqual("RGB", profile.Personalities[0].Name);
+        Assert.AreEqual("RGB+CT", profile.Personalities[1].Name);
+        CollectionAssert.AreEqual(
+            new[] { PluginFixtureFunction.Red, PluginFixtureFunction.Green, PluginFixtureFunction.Blue },
+            profile.Personalities[0].Channels.ToArray());
+        CollectionAssert.AreEqual(
+            new[]
             {
-                Code = "fixture.HOUSE",
-                Text = """{"red":1,"green":0,"blue":0,"intensity":1}""",
-            };
-        });
-
-        Assert.AreEqual(1, client.Colors.Count);
-        client.Reset();
-
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "discover");
-
-        Assert.AreEqual(1, client.DiscoverCalls);
-        Assert.AreEqual(1, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
+                PluginFixtureFunction.Red,
+                PluginFixtureFunction.Green,
+                PluginFixtureFunction.Blue,
+                PluginFixtureFunction.ColorTemperature,
+            },
+            profile.Personalities[1].Channels.ToArray());
     }
 
     [TestMethod]
-    public async Task FollowFixture_AppliesEntityColour()
+    public async Task GetChannelCount_MatchesPersonality()
     {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.SetSetting(LifxPlugin.FollowFixtureKey, "HOUSE");
-        });
+        var (_, host, _) = await CreateInitializedAsync();
+        PluginOutputMappingConfig config = Mapping("192.168.1.10");
 
-        await host.SimulateEntityStateAsync(new PluginEntityState
-        {
-            Code = "fixture.HOUSE",
-            Text = """{"red":1,"green":0,"blue":0,"intensity":0.5}""",
-        });
-
-        Assert.AreEqual(1, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
-        Assert.AreEqual(0.0, client.Colors[0].G, 1e-9);
-        Assert.AreEqual(0.5, client.Colors[0].Brightness, 1e-9);
+        Assert.AreEqual(3, Protocol(host, LifxPlugin.ColorProtocolId).GetChannelCount(config));
+        Assert.AreEqual(4, Protocol(host, LifxPlugin.ColorCtProtocolId).GetChannelCount(config));
     }
 
     [TestMethod]
-    public async Task FollowFixture_IgnoresOtherEntities()
+    public async Task SendRgb_WritesSetColorHsbkAndDuration()
     {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.SetSetting(LifxPlugin.FollowFixtureKey, "HOUSE");
-        });
+        var (_, host, sent) = await CreateInitializedAsync();
+        Hsbk expected = LifxColor.RgbToHsbk(1, 0, 0, LifxConstants.DefaultKelvin);
 
-        await host.SimulateEntityStateAsync(new PluginEntityState
-        {
-            Code = "fixture.WASH",
-            Text = """{"red":0,"green":1,"blue":0,"intensity":1}""",
-        });
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.ColorProtocolId,
+            Mapping("192.168.1.10"),
+            [255, 0, 0]);
 
-        Assert.AreEqual(0, client.Colors.Count);
+        Assert.IsTrue(ok);
+        byte[] color = AssertSetColor(sent);
+        (ushort hue, ushort sat, ushort bri, ushort kelvin, uint duration) = ReadSetColor(color);
+        Assert.AreEqual(expected.Hue, hue);
+        Assert.AreEqual(expected.Saturation, sat);
+        Assert.AreEqual(expected.Brightness, bri);
+        Assert.AreEqual(expected.Kelvin, kelvin);
+        Assert.AreEqual((uint)LifxConstants.StreamDurationMs, duration);
+        Assert.AreEqual(LifxConstants.Port, sent[0].Endpoint.Port);
+        Assert.AreEqual("192.168.1.10", sent[0].Endpoint.Address.ToString());
     }
 
     [TestMethod]
-    public async Task FollowFixture_EmptyDoesNothing()
+    public async Task SendRgbCt_MapsColorTemperatureToKelvin()
     {
-        var (_, host, client) = await CreateInitializedAsync();
+        var (_, host, sent) = await CreateInitializedAsync();
 
-        await host.SimulateEntityStateAsync(new PluginEntityState
-        {
-            Code = "fixture.HOUSE",
-            Text = """{"red":1,"green":0,"blue":0,"intensity":1}""",
-        });
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.ColorCtProtocolId,
+            Mapping("192.168.1.10"),
+            [0, 0, 0, 255]);
 
-        Assert.AreEqual(0, client.Colors.Count);
+        Assert.IsTrue(ok);
+        (_, _, _, ushort kelvin, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(LifxConstants.KelvinMax, kelvin);
     }
 
     [TestMethod]
-    public async Task FollowFixture_ZeroIntensityPowersOff()
+    public async Task Session_PowersOnOnceThenStreamsColor()
     {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.SetSetting(LifxPlugin.FollowFixtureKey, "HOUSE");
-        });
+        var (_, host, sent) = await CreateInitializedAsync();
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.ColorProtocolId);
+        await using IPluginOutputSession session = await protocol.OpenSessionAsync(
+            Mapping("192.168.1.10"),
+            CancellationToken.None);
 
-        await host.SimulateEntityStateAsync(new PluginEntityState
-        {
-            Code = "HOUSE",
-            Text = """{"red":1,"green":1,"blue":1,"intensity":0}""",
-        });
+        Assert.IsTrue(await session.SendAsync(new byte[] { 255, 0, 0 }, CancellationToken.None));
+        Assert.IsTrue(await session.SendAsync(new byte[] { 0, 255, 0 }, CancellationToken.None));
 
-        Assert.AreEqual((client.Lights[0].Id, false), client.Powers.Single());
-        Assert.AreEqual(0, client.Colors.Count);
+        Assert.AreEqual(3, sent.Count);
+        Assert.AreEqual(LifxConstants.SetPower, LifxPackets.ReadMessageType(sent[0].Packet));
+        Assert.AreEqual(LifxConstants.SetColor, LifxPackets.ReadMessageType(sent[1].Packet));
+        Assert.AreEqual(LifxConstants.SetColor, LifxPackets.ReadMessageType(sent[2].Packet));
     }
 
     [TestMethod]
-    public async Task CueEnded_BlackoutWhenEnabled()
+    public async Task Discover_ReturnsIpDestinationsAndSkipsSwitches()
     {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.SetSetting(LifxPlugin.BlackoutOnCueEndKey, "true");
-        });
-
-        await host.SimulateCueEndedAsync("PARTY");
-
-        Assert.AreEqual((client.Lights[0].Id, false), client.Powers.Single());
-    }
-
-    [TestMethod]
-    public async Task CueEnded_DoesNothingWhenBlackoutOff()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-
-        await host.SimulateCueEndedAsync("PARTY");
-
-        Assert.AreEqual(0, client.Powers.Count);
-        Assert.AreEqual(0, client.Colors.Count);
-    }
-
-    [TestMethod]
-    public async Task FollowMaster_ScalesLastColour()
-    {
-        var (_, host, client) = await CreateInitializedAsync((h, _) =>
-        {
-            h.SetSetting(LifxPlugin.FollowMasterKey, "true");
-        });
-
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "color all 255 0 0");
-        Assert.AreEqual(1.0, client.Colors.Single().Brightness, 1e-9);
-
-        await host.SimulateEntityStateAsync(new PluginEntityState
-        {
-            Code = LifxPlugin.MasterDimmerCode,
-            Level = 0.4,
-        });
-
-        Assert.AreEqual(2, client.Colors.Count);
-        Assert.AreEqual(0.4, client.Colors[1].Brightness, 1e-9);
-    }
-
-    [TestMethod]
-    public async Task MasterDimmer_IgnoredWhenFollowOff()
-    {
-        var (_, host, client) = await CreateInitializedAsync();
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "color all 255 0 0");
-
-        await host.SimulateEntityStateAsync(new PluginEntityState
-        {
-            Code = LifxPlugin.MasterDimmerCode,
-            Level = 0.2,
-        });
-
-        Assert.AreEqual(1, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].Brightness, 1e-9);
-    }
-
-    [TestMethod]
-    public async Task Identify_PaintsDistinctHues()
-    {
-        var (_, host, client) = await CreateInitializedAsync((_, fake) =>
-        {
-            fake.AddLight(new LifxLight([8, 7, 6, 5, 4, 3, 2, 1], "192.168.1.11", "Bar")
+        LifxLight[] lights =
+        [
+            new LifxLight([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
             {
-                Power = 65535,
-            });
-        });
+                ModelName = "LIFX A19",
+                Product = 72,
+            },
+            new LifxLight([8, 7, 6, 5, 4, 3, 2, 1], "192.168.1.20", "Hall")
+            {
+                ModelName = "LIFX Switch",
+                Product = 70,
+                IsLight = false,
+            },
+        ];
+        var (_, host, _) = await CreateInitializedAsync(lights);
 
-        await host.SimulateMqttMessageAsync(LifxStatus.CommandTopic(Serial(host)), "identify");
+        IReadOnlyList<PluginOutputDestinationOption>? options =
+            await Protocol(host, LifxPlugin.ColorProtocolId)
+                .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
-        Assert.AreEqual(2, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
-        Assert.AreEqual(0.0, client.Colors[0].G, 1e-9);
-        Assert.AreNotEqual(client.Colors[0].R, client.Colors[1].R, 1e-9);
+        Assert.IsNotNull(options);
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("192.168.1.10", options[0].Value);
+        Assert.AreEqual("Kitchen (192.168.1.10, LIFX A19)", options[0].Label);
     }
 
     [TestMethod]
-    public async Task IdentifyToggle_UsesSettingsPage()
+    public async Task Discover_UsesCacheUntilRefresh()
     {
-        var (_, host, client) = await CreateInitializedAsync();
+        int calls = 0;
+        LifxLight kitchen = new([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
+        {
+            ModelName = "LIFX A19",
+            Product = 72,
+        };
+        var plugin = new LifxPlugin(
+            (_, _) =>
+            {
+                calls++;
+                return Task.FromResult<IReadOnlyList<LifxLight>>([kitchen]);
+            },
+            null);
+        this.plugins.Add(plugin);
+        var host = new TestPluginHost(plugin.Info, logOutput: _ => { });
+        await plugin.InitializeAsync(host, CancellationToken.None);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.ColorProtocolId);
 
-        host.SetSetting(LifxPlugin.IdentifyKey, "true");
-        await host.TriggerSettingsChangedAsync();
+        _ = await protocol.GetDestinationOptionsAsync(refresh: false, CancellationToken.None);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: false, CancellationToken.None);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
-        Assert.AreEqual(1, client.Colors.Count);
-        Assert.AreEqual(1.0, client.Colors[0].R, 1e-9);
+        Assert.AreEqual(2, calls);
     }
 
     [TestMethod]
-    public async Task ChaseToggle_StartsEffect()
+    public async Task Discover_ConcurrentRefresh_SharesInFlightScan()
     {
-        var (_, host, client) = await CreateInitializedAsync();
+        int calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        LifxLight kitchen = new([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
+        {
+            ModelName = "LIFX A19",
+            Product = 72,
+        };
+        var plugin = new LifxPlugin(
+            async (_, cancellationToken) =>
+            {
+                Interlocked.Increment(ref calls);
+                started.TrySetResult();
+                await release.Task.WaitAsync(cancellationToken);
+                return (IReadOnlyList<LifxLight>)[kitchen];
+            },
+            null);
+        this.plugins.Add(plugin);
+        var host = new TestPluginHost(plugin.Info, logOutput: _ => { });
+        await plugin.InitializeAsync(host, CancellationToken.None);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.ColorProtocolId);
 
-        host.SetSetting(LifxPlugin.ChaseKey, "true");
-        await host.TriggerSettingsChangedAsync();
-        await WaitForAsync(() => client.Colors.Count > 0, "chase did not start");
+        Task<IReadOnlyList<PluginOutputDestinationOption>?> first =
+            protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+        await started.Task;
+        Task<IReadOnlyList<PluginOutputDestinationOption>?> second =
+            protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+        release.SetResult();
 
-        Assert.IsTrue(client.Colors.Count > 0);
+        IReadOnlyList<PluginOutputDestinationOption>?[] results = await Task.WhenAll(first, second);
+
+        Assert.AreEqual(1, calls);
+        Assert.AreEqual(1, results[0]!.Count);
+        Assert.AreEqual(1, results[1]!.Count);
+        Assert.AreEqual("192.168.1.10", results[0]![0].Value);
+    }
+
+    [TestMethod]
+    public async Task Discover_InitiatorCancel_DoesNotFailOtherRefresh()
+    {
+        int calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken scanToken = CancellationToken.None;
+        LifxLight kitchen = new([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
+        {
+            ModelName = "LIFX A19",
+            Product = 72,
+        };
+        var plugin = new LifxPlugin(
+            async (_, cancellationToken) =>
+            {
+                Interlocked.Increment(ref calls);
+                scanToken = cancellationToken;
+                started.TrySetResult();
+                await release.Task;
+                return (IReadOnlyList<LifxLight>)[kitchen];
+            },
+            null);
+        this.plugins.Add(plugin);
+        var host = new TestPluginHost(plugin.Info, logOutput: _ => { });
+        await plugin.InitializeAsync(host, CancellationToken.None);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.ColorProtocolId);
+
+        using var firstCts = new CancellationTokenSource();
+        Task<IReadOnlyList<PluginOutputDestinationOption>?> first =
+            protocol.GetDestinationOptionsAsync(refresh: true, firstCts.Token);
+        await started.Task;
+        Task<IReadOnlyList<PluginOutputDestinationOption>?> second =
+            protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        firstCts.Cancel();
+        await Assert.ThrowsExactlyAsync<TaskCanceledException>(() => first);
+        Assert.IsFalse(scanToken.IsCancellationRequested);
+
+        release.SetResult();
+        IReadOnlyList<PluginOutputDestinationOption>? options = await second;
+
+        Assert.AreEqual(1, calls);
+        Assert.IsNotNull(options);
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("192.168.1.10", options[0].Value);
+    }
+
+    [TestMethod]
+    public async Task PixelDiscover_ListsOnlyZoneCapableDevicesWithPixelCount()
+    {
+        LifxLight[] lights =
+        [
+            new LifxLight([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
+            {
+                ModelName = "LIFX A19",
+                Product = 72,
+            },
+            SuperColourTube(),
+        ];
+        var (_, host, _) = await CreateInitializedAsync(lights);
+
+        IReadOnlyList<PluginOutputDestinationOption>? color =
+            await Protocol(host, LifxPlugin.ColorProtocolId)
+                .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+        IReadOnlyList<PluginOutputDestinationOption>? pixel =
+            await Protocol(host, LifxPlugin.PixelProtocolId)
+                .GetDestinationOptionsAsync(refresh: false, CancellationToken.None);
+
+        Assert.IsNotNull(color);
+        Assert.AreEqual(2, color.Count);
+        Assert.IsNotNull(pixel);
+        Assert.AreEqual(1, pixel.Count);
+        Assert.AreEqual("192.168.1.30", pixel[0].Value);
+        Assert.AreEqual("Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)", pixel[0].Label);
+    }
+
+    [TestMethod]
+    public async Task PixelGetChannelCount_IsThreeTimesDiscoveredZones()
+    {
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        Assert.AreEqual(156, protocol.GetChannelCount(Mapping("192.168.1.30")));
+        Assert.AreEqual(0, protocol.GetChannelCount(Mapping("192.168.1.10")));
+    }
+
+    [TestMethod]
+    public async Task SendPixel_WritesSet64ForSuperColourTube()
+    {
+        var (_, host, sent) = await CreateInitializedAsync([SuperColourTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        byte[] channels = new byte[156];
+        for (int i = 0; i < 52; i++)
+        {
+            channels[i * 3] = 255;
+        }
+
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.PixelProtocolId,
+            Mapping("192.168.1.30"),
+            channels);
+
+        Assert.IsTrue(ok);
+        Assert.AreEqual(LifxConstants.SetPower, LifxPackets.ReadMessageType(sent[0].Packet));
+        byte[] set64 = sent.Select(item => item.Packet)
+            .First(item => LifxPackets.ReadMessageType(item) == LifxConstants.Set64);
+        int o = LifxConstants.HeaderSize;
+        Assert.AreEqual(0, set64[o]);
+        Assert.AreEqual(0, set64[o + 3]);
+        Assert.AreEqual(0, set64[o + 4]);
+        Assert.AreEqual(4, set64[o + 5]);
+        Assert.AreEqual((uint)LifxConstants.StreamDurationMs, BinaryPrimitives.ReadUInt32LittleEndian(set64.AsSpan(o + 6, 4)));
+        Assert.AreEqual("192.168.1.30", sent[0].Endpoint.Address.ToString());
+    }
+
+    [TestMethod]
+    public async Task SendPixel_WritesExtendedMzForLinearBeam()
+    {
+        var (_, host, sent) = await CreateInitializedAsync([LinearBeam()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        byte[] channels = new byte[24];
+        for (int i = 0; i < 8; i++)
+        {
+            channels[i * 3] = 255;
+        }
+
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.PixelProtocolId,
+            Mapping("192.168.1.40"),
+            channels);
+
+        Assert.IsTrue(ok);
+        Assert.AreEqual(LifxConstants.SetPower, LifxPackets.ReadMessageType(sent[0].Packet));
+        byte[] mz = sent.Select(item => item.Packet)
+            .First(item => LifxPackets.ReadMessageType(item) == LifxConstants.SetExtendedColorZones);
+        int o = LifxConstants.HeaderSize;
+        Assert.AreEqual((uint)LifxConstants.StreamDurationMs, BinaryPrimitives.ReadUInt32LittleEndian(mz.AsSpan(o, 4)));
+        Assert.AreEqual(LifxConstants.MultiZoneApply, mz[o + 4]);
+        Assert.AreEqual(0, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(o + 5, 2)));
+        Assert.AreEqual(8, mz[o + 7]);
+        Assert.AreEqual("192.168.1.40", sent[0].Endpoint.Address.ToString());
+    }
+
+    [TestMethod]
+    public async Task PixelOpenSession_RequiresZoneCapableDevice()
+    {
+        var (_, host, _) = await CreateInitializedAsync();
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            protocol.OpenSessionAsync(Mapping("192.168.1.10"), CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task OpenSession_RequiresValidIp()
+    {
+        var (_, host, _) = await CreateInitializedAsync();
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.ColorProtocolId);
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            protocol.OpenSessionAsync(Mapping(""), CancellationToken.None));
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            protocol.OpenSessionAsync(Mapping("not-an-ip"), CancellationToken.None));
+    }
+
+    [TestMethod]
+    public void DestinationLabel_FallsBackWhenNameMissing()
+    {
+        var light = new LifxLight(new byte[8], "10.0.0.5");
+        Assert.AreEqual("LIFX (10.0.0.5, LIFX)", LifxDiscovery.DestinationLabel(light));
+    }
+
+    [TestMethod]
+    public void DestinationLabel_AppendsPixelCountForMultipixelDevices()
+    {
+        Assert.AreEqual(
+            "Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)",
+            LifxDiscovery.DestinationLabel(SuperColourTube()));
+    }
+
+    [TestMethod]
+    public void KelvinFromDmx_SpansLifxRange()
+    {
+        Assert.AreEqual(LifxConstants.KelvinMin, LifxColor.KelvinFromDmx(0));
+        Assert.AreEqual(LifxConstants.KelvinMax, LifxColor.KelvinFromDmx(255));
+    }
+
+    private static LifxLight SuperColourTube() =>
+        new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.30", "Bar")
+        {
+            ModelName = "LIFX SuperColour Tube",
+            Product = 218,
+            Layout = LifxLayout.Matrix,
+            MatrixWidth = 4,
+            MatrixHeight = 13,
+            TileCount = 1,
+            ZoneCount = 52,
+        };
+
+    private static LifxLight LinearBeam() =>
+        new([2, 3, 4, 5, 6, 7, 8, 9], "192.168.1.40", "Beam")
+        {
+            ModelName = "LIFX Beam",
+            Product = 38,
+            Layout = LifxLayout.Linear,
+            ZoneCount = 8,
+        };
+
+    private static IPluginOutputProtocol Protocol(TestPluginHost host, string id) =>
+        host.OutputProtocols[id].Protocol;
+
+    private static PluginOutputMappingConfig Mapping(string ip) =>
+        new()
+        {
+            DestinationAddress = ip,
+            ChannelOffset = 0,
+            UniverseId = 1,
+        };
+
+    private static byte[] AssertSetColor(List<(IPEndPoint Endpoint, byte[] Packet)> sent)
+    {
+        byte[]? packet = sent.Select(item => item.Packet)
+            .FirstOrDefault(item => LifxPackets.ReadMessageType(item) == LifxConstants.SetColor);
+        Assert.IsNotNull(packet);
+        return packet;
+    }
+
+    private static (ushort Hue, ushort Saturation, ushort Brightness, ushort Kelvin, uint Duration) ReadSetColor(
+        byte[] packet)
+    {
+        int o = LifxConstants.HeaderSize;
+        return (
+            BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(o + 1, 2)),
+            BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(o + 3, 2)),
+            BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(o + 5, 2)),
+            BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(o + 7, 2)),
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(o + 9, 4)));
     }
 }
