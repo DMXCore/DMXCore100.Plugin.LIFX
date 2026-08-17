@@ -38,7 +38,58 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: lifx-plugin
-          path: artifacts/*.dmxplugin
+          path: |
+            artifacts/*.dmxplugin
+            artifacts/*.nupkg
+
+  # Plugin registry: nuget.org is where DMX Core 100 devices browse, install
+  # and update plugins from, so pushing here IS the release. --skip-duplicate
+  # makes re-pushing an already published version a no-op, so bumping
+  # <Version> in the csproj is what publishes. Keyless (Trusted Publishing):
+  # GitHub's OIDC token is exchanged for a one-hour nuget.org API key against
+  # the trusted-publishing policy registered on nuget.org for this repo +
+  # workflow file (release.yml). NUGET_USER (repo or org Actions variable) is
+  # the nuget.org profile name that owns the policy.
+  publish-nuget:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lifx-plugin
+          path: artifacts
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0.x
+
+      # A package pushed to nuget.org can never be deleted, so refuse a
+      # package that lacks the plugin payload (built with an SDK that
+      # predates registry packaging, or a broken pack) BEFORE logging in.
+      - name: Verify plugin package
+        run: |
+          set -euo pipefail
+          pkg=$(ls artifacts/*.nupkg | head -1)
+          if ! unzip -l "$pkg" | grep -q 'content/plugin.dmxplugin'; then
+            echo "::error::$pkg lacks content/plugin.dmxplugin - not a DmxCorePlugin package"
+            exit 1
+          fi
+
+      - name: NuGet login (OIDC)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish to nuget.org
+        run: |
+          dotnet nuget push artifacts/*.nupkg \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+            --skip-duplicate
 
   release:
     needs: build

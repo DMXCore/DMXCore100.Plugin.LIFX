@@ -39,4 +39,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: lifx-plugin
-          path: artifacts/*.dmxplugin
+          path: |
+            artifacts/*.dmxplugin
+            artifacts/*.nupkg
