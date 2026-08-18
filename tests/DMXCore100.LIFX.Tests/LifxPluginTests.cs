@@ -753,6 +753,104 @@ public class LifxPluginTests
     }
 
     [TestMethod]
+    public void Merge_KeepsDevicesTheScanMissed()
+    {
+        LifxLight[] previous = [SuperColourTube(), Kitchen()];
+        LifxLight[] scanned = [Kitchen()];
+
+        IReadOnlyList<LifxLight> merged = LifxDiscovery.Merge(previous, scanned);
+
+        Assert.AreEqual(2, merged.Count);
+        Assert.IsTrue(merged.Any(light => light.Ip == "192.168.1.30"), "missed Tube must survive the scan");
+        Assert.AreSame(scanned[0], merged[0], "scanned entries win");
+    }
+
+    [TestMethod]
+    public void Merge_BackfillsProductAndGeometryFromPreviousEntry()
+    {
+        // The Tube answered GetService but dropped StateVersion and the
+        // chain reply: a bare entry with only target + IP
+        LifxLight bare = new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.30");
+        IReadOnlyList<LifxLight> merged = LifxDiscovery.Merge([SuperColourTube()], [bare]);
+
+        Assert.AreEqual(1, merged.Count);
+        LifxLight tube = merged[0];
+        Assert.AreEqual("Bar", tube.Label);
+        Assert.AreEqual(218u, tube.Product);
+        Assert.AreEqual("LIFX SuperColour Tube", tube.ModelName);
+        Assert.AreEqual(LifxLayout.Matrix, tube.Layout);
+        Assert.AreEqual(52, tube.ZoneCount);
+        Assert.AreEqual(4, tube.MatrixWidth);
+        Assert.AreEqual(13, tube.MatrixHeight);
+        Assert.IsTrue(tube.ZoneCapable);
+    }
+
+    [TestMethod]
+    public void Merge_ScannedValuesBeatBackfill()
+    {
+        LifxLight fresh = SuperColourTube();
+        fresh.Label = "Renamed";
+        fresh.ZoneCount = 55;
+        fresh.MatrixWidth = 5;
+        fresh.MatrixHeight = 11;
+
+        LifxLight tube = LifxDiscovery.Merge([SuperColourTube()], [fresh])[0];
+
+        Assert.AreEqual("Renamed", tube.Label);
+        Assert.AreEqual(55, tube.ZoneCount);
+        Assert.AreEqual(5, tube.MatrixWidth);
+    }
+
+    [TestMethod]
+    public void Merge_DropsPreviousDeviceWhoseIpMovedToAnotherTarget()
+    {
+        LifxLight previousAtIp = new([1, 1, 1, 1, 1, 1, 1, 1], "192.168.1.10", "Old");
+        LifxLight newcomerAtIp = new([2, 2, 2, 2, 2, 2, 2, 2], "192.168.1.10", "New") { Product = 72 };
+
+        IReadOnlyList<LifxLight> merged = LifxDiscovery.Merge([previousAtIp], [newcomerAtIp]);
+
+        Assert.AreEqual(1, merged.Count);
+        Assert.AreEqual("New", merged[0].Label);
+    }
+
+    [TestMethod]
+    public void Merge_WithNoPreviousReturnsScan()
+    {
+        LifxLight[] scanned = [Kitchen()];
+        Assert.AreSame(scanned, LifxDiscovery.Merge(null, scanned));
+        Assert.AreSame(scanned, LifxDiscovery.Merge([], scanned));
+    }
+
+    [TestMethod]
+    public async Task PixelDiscover_StillListsSeededTubeWhenScanMissesIt()
+    {
+        // Persisted state knows the Tube; the live scan only hears the bulb
+        // (the Tube is busy being streamed to and dropped the broadcast)
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        _ = await Protocol(host, LifxPlugin.PixelProtocolId)
+            .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        var plugin = new LifxPlugin(
+            (_, _) => Task.FromResult<IReadOnlyList<LifxLight>>([Kitchen()]),
+            null);
+        this.plugins.Add(plugin);
+        var restartedHost = new TestPluginHost(plugin.Info, logOutput: _ => { }) { StateJson = host.StateJson };
+        await plugin.InitializeAsync(restartedHost, CancellationToken.None);
+
+        IReadOnlyList<PluginOutputDestinationOption>? pixel = await Protocol(restartedHost, LifxPlugin.PixelProtocolId)
+            .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+        IReadOnlyList<PluginOutputDestinationOption>? color = await Protocol(restartedHost, LifxPlugin.ColorProtocolId)
+            .GetDestinationOptionsAsync(refresh: false, CancellationToken.None);
+
+        Assert.IsNotNull(pixel);
+        Assert.AreEqual(1, pixel.Count);
+        Assert.AreEqual("192.168.1.30", pixel[0].Value);
+        Assert.IsNotNull(color);
+        Assert.AreEqual(2, color.Count);
+        StringAssert.Contains(restartedHost.StateJson, "192.168.1.30", "the merged snapshot is what gets persisted");
+    }
+
+    [TestMethod]
     public async Task ScanCompleted_IsAwaitedBeforeGetLightsAsyncReturns()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -893,6 +991,13 @@ public class LifxPluginTests
         Assert.AreEqual(LifxConstants.KelvinMin, LifxColor.KelvinFromDmx(0));
         Assert.AreEqual(LifxConstants.KelvinMax, LifxColor.KelvinFromDmx(255));
     }
+
+    private static LifxLight Kitchen() =>
+        new([1, 2, 3, 4, 5, 6, 7, 8], "192.168.1.10", "Kitchen")
+        {
+            ModelName = "LIFX A19",
+            Product = 72,
+        };
 
     private static LifxLight SuperColourTube() =>
         new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.30", "Bar")

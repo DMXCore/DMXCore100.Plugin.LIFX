@@ -76,7 +76,11 @@ so the fixture footprint matches.
 - **No lights in Discover:** confirm the bulbs are powered and on the same
   subnet, then press Discover again. The plugin broadcasts LIFX
   `GetService` (not mDNS), then queries labels, product, and zone/tile
-  geometry for SuperColour / strips.
+  geometry for SuperColour / strips, re-asking devices that did not answer.
+  A device that is busy being streamed to sometimes drops a request; a
+  scan never removes a previously seen device or forgets its geometry, so
+  the list only ever grows (a device whose IP is taken over by another
+  LIFX device is replaced).
 - **Pixel mapping has 0 channels:** set the mapping's **Pixels** field, or
   run Discover on the Pixel protocol and pick the device (which fills it).
   Give the fixture a static DHCP lease.

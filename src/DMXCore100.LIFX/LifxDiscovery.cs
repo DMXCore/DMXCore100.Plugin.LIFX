@@ -103,6 +103,7 @@ internal sealed class LifxDiscovery
             lights = lights
                 .Where(static light => light.IsLight && !LifxProducts.IsSwitch((int)light.Product, light.ModelName))
                 .ToArray();
+            lights = Merge(this.cached, lights);
             this.cached = lights;
             if (lights.Count > 0 && ScanCompleted is { } onCompleted)
             {
@@ -130,6 +131,78 @@ internal sealed class LifxDiscovery
         }
     }
 
+    /// <summary>
+    /// Fold a scan into the previous snapshot. UDP discovery is lossy - a
+    /// bulb that is busy being streamed to often misses one GetService or
+    /// StateVersion - so a scan must never make a known device disappear or
+    /// forget its product/geometry: devices not seen this time are kept, and
+    /// a seen device missing product or geometry inherits them from its
+    /// previous entry (same target). A cached device whose IP was taken by a
+    /// different target is dropped (DHCP moved the address).
+    /// </summary>
+    internal static IReadOnlyList<LifxLight> Merge(IReadOnlyList<LifxLight>? previous, IReadOnlyList<LifxLight> scanned)
+    {
+        if (previous == null || previous.Count == 0)
+        {
+            return scanned;
+        }
+
+        var byTarget = previous.ToDictionary(static light => Key(light), StringComparer.Ordinal);
+        var merged = new List<LifxLight>(previous.Count + scanned.Count);
+        var seenTargets = new HashSet<string>(StringComparer.Ordinal);
+        var seenIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (LifxLight light in scanned)
+        {
+            if (byTarget.TryGetValue(Key(light), out LifxLight? known))
+            {
+                Backfill(light, known);
+            }
+
+            merged.Add(light);
+            seenTargets.Add(Key(light));
+            seenIps.Add(light.Ip);
+        }
+
+        foreach (LifxLight known in previous)
+        {
+            if (!seenTargets.Contains(Key(known)) && !seenIps.Contains(known.Ip))
+            {
+                merged.Add(known);
+            }
+        }
+
+        return merged;
+
+        static string Key(LifxLight light) => Convert.ToHexString(light.Target);
+    }
+
+    private static void Backfill(LifxLight light, LifxLight known)
+    {
+        if (string.IsNullOrWhiteSpace(light.Label))
+        {
+            light.Label = known.Label;
+        }
+
+        if (light.Product == 0 && known.Product != 0)
+        {
+            light.Vendor = known.Vendor;
+            light.Product = known.Product;
+            light.ModelName = known.ModelName;
+            light.IsLight = known.IsLight;
+        }
+
+        bool hasGeometry = light.Layout is LifxLayout.Linear or LifxLayout.Matrix && light.ZoneCount > 1;
+        bool knownGeometry = known.Layout is LifxLayout.Linear or LifxLayout.Matrix && known.ZoneCount > 1;
+        if (!hasGeometry && knownGeometry)
+        {
+            light.Layout = known.Layout;
+            light.ZoneCount = known.ZoneCount;
+            light.MatrixWidth = known.MatrixWidth;
+            light.MatrixHeight = known.MatrixHeight;
+            light.TileCount = known.TileCount;
+        }
+    }
+
     public LifxLight? LightFor(string ip)
     {
         return this.cached?.FirstOrDefault(light =>
@@ -150,76 +223,88 @@ internal sealed class LifxDiscovery
         using var listenCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task listen = ListenAsync(udp, source, lights, listenCts.Token);
 
-        byte[] getService = packets.GetService();
-        foreach (IPAddress broadcast in DiscoveryBroadcastAddresses())
-        {
-            Send(udp, getService, broadcast);
-        }
-
         try
         {
-            await Task.Delay(timeout, cancellationToken);
+            // Everything below is best-effort UDP to devices that drop
+            // requests when busy (a bulb being streamed to at 20 pps often
+            // ignores the first GetService or StateVersion), so each stage
+            // re-asks the devices that have not answered yet
+            byte[] getService = packets.GetService();
+            IReadOnlyList<IPAddress> broadcasts = DiscoveryBroadcastAddresses();
+            TimeSpan half = timeout / 2;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                foreach (IPAddress broadcast in broadcasts)
+                {
+                    Send(udp, getService, broadcast);
+                }
+
+                await Task.Delay(half, cancellationToken);
+            }
+
+            for (int attempt = 0; attempt < LifxConstants.DiscoveryQueryAttempts; attempt++)
+            {
+                LifxLight[] pending;
+                lock (lights)
+                {
+                    pending = lights.Values
+                        .Where(static light => light.Product == 0 || string.IsNullOrWhiteSpace(light.Label))
+                        .ToArray();
+                }
+
+                if (pending.Length == 0)
+                {
+                    break;
+                }
+
+                foreach (LifxLight light in pending)
+                {
+                    IPAddress ip = IPAddress.Parse(light.Ip);
+                    if (string.IsNullOrWhiteSpace(light.Label))
+                    {
+                        Send(udp, packets.GetLabel(light.Target), ip);
+                    }
+
+                    if (light.Product == 0)
+                    {
+                        Send(udp, packets.GetVersion(light.Target), ip);
+                    }
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken);
+            }
+
+            for (int attempt = 0; attempt < LifxConstants.DiscoveryQueryAttempts; attempt++)
+            {
+                LifxLight[] pending;
+                lock (lights)
+                {
+                    pending = lights.Values
+                        .Where(static light => light.ZoneCapable && light.ZoneCount <= 1)
+                        .ToArray();
+                }
+
+                if (pending.Length == 0)
+                {
+                    break;
+                }
+
+                foreach (LifxLight light in pending)
+                {
+                    byte[]? request = packets.GeometryRequest(light);
+                    if (request != null)
+                    {
+                        Send(udp, request, IPAddress.Parse(light.Ip));
+                    }
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+            }
         }
         catch (OperationCanceledException)
         {
             await StopListen(listenCts, listen);
             throw;
-        }
-
-        LifxLight[] snapshot;
-        lock (lights)
-        {
-            snapshot = [.. lights.Values];
-        }
-
-        foreach (LifxLight light in snapshot)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            IPAddress ip = IPAddress.Parse(light.Ip);
-            Send(udp, packets.GetLabel(light.Target), ip);
-            Send(udp, packets.GetVersion(light.Target), ip);
-        }
-
-        if (snapshot.Length > 0)
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                await StopListen(listenCts, listen);
-                throw;
-            }
-        }
-
-        LifxLight[] zoned;
-        lock (lights)
-        {
-            zoned = lights.Values.Where(static light => light.ZoneCapable).ToArray();
-        }
-
-        foreach (LifxLight light in zoned)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            byte[]? request = packets.GeometryRequest(light);
-            if (request != null)
-            {
-                Send(udp, request, IPAddress.Parse(light.Ip));
-            }
-        }
-
-        if (zoned.Length > 0)
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                await StopListen(listenCts, listen);
-                throw;
-            }
         }
 
         await StopListen(listenCts, listen);

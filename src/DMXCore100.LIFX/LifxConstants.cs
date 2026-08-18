@@ -18,6 +18,12 @@ internal static class LifxConstants
     public const int MaxUpdatesPerSecond = 20;
     public const int DiscoveryTimeoutMs = 2000;
 
+    /// <summary>
+    /// How many times a per-device query (label / version / geometry) is
+    /// re-sent to devices that have not answered before giving up.
+    /// </summary>
+    public const int DiscoveryQueryAttempts = 3;
+
     public const ushort GetService = 2;
     public const ushort StateService = 3;
     public const ushort SetPower = 21;

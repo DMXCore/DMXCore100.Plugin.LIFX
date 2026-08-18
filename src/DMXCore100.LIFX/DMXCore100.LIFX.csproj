@@ -7,7 +7,7 @@
     <!-- The SDK generates manifest.json and PluginBuildInfo from these -->
     <PluginId>lifx</PluginId>
     <PluginDisplayName>LIFX</PluginDisplayName>
-    <Version>1.1.1</Version>
+    <Version>1.1.2</Version>
     <Authors>DMX Core</Authors>
 
     <!-- Plugin registry (nuget.org) package metadata. DMXCore.Plugin.* is the
