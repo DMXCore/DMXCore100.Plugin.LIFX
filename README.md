@@ -26,10 +26,9 @@ In the fixture editor, patch bulbs with the plugin's **LIFX / Color Bulb**
 profile; its personalities match the color protocols one-to-one (**RGB**,
 **RGB+CT**, **RGBW**, **RGBW+CT**, and the same four as **16-bit**).
 Pixel mappings take `zones × 3` channels (`zones × 6` in 16-bit) from
-discovery (SuperColour Tube is typically 52 or 55 pixels). The Mapped
-Device selector prefills from an existing LIFX mapping. Presets, cues,
-effects, and Fixture Control then drive the device through the normal
-lighting pipeline.
+discovery. The Mapped Device selector prefills from an existing LIFX
+mapping. Presets, cues, effects, and Fixture Control then drive the device
+through the normal lighting pipeline.
 
 The Core rate-limits each mapping to 20 updates/second and coalesces
 latest-wins. Color mappings convert RGB(W) to LIFX HSBK and send
@@ -62,6 +61,15 @@ plugin fixture profiles; the 8-bit features need 1.6).
 | `LIFX_COLOR_RGBW_16` | RGB + W, coarse + fine (8 ch) | |
 | `LIFX_COLOR_RGBW_CT_16` | RGB + W + CT, coarse + fine (10 ch) | |
 | `LIFX_PIXEL` | RGB × zones (× 6 with **16-bit** ticked) | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. The Pixels field (stamped by Discover) sets the channel count; discovery results also persist across restarts. |
+
+**SuperColour Tube pixel count:** the Tube's firmware reports a 5×11 tile
+(55 zones) but only 52 light — device indexes 0–1 are the two zones on
+top, 2–4 are dead, and 5–54 run from the top of the side down to the base
+(measured on hardware). The plugin exposes it as **52 pixels** in order
+(pixel 1–2 top, 3–52 down the side) and routes around the gap; a mapping
+created with an older version that stored **Pixels = 55** still works
+(the last three pixels are ignored) but should be re-picked from Discover
+so the fixture footprint matches.
 
 ## Troubleshooting
 

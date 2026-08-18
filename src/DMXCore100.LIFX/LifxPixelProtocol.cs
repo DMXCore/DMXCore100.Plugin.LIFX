@@ -60,7 +60,7 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
             return 0;
         }
 
-        return Math.Max(1, light.ZoneCount) * perPixel;
+        return LifxPixelMap.PixelCount(light) * perPixel;
     }
 
     public async Task<IPluginOutputSession> OpenSessionAsync(
@@ -100,7 +100,7 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
                 // channel count persists with the configuration
                 Options = new Dictionary<string, string>
                 {
-                    [PixelsOptionKey] = Math.Max(1, light.ZoneCount).ToString(),
+                    [PixelsOptionKey] = LifxPixelMap.PixelCount(light).ToString(),
                 },
             })
             .ToArray();
@@ -125,16 +125,19 @@ internal sealed class LifxPixelSession : IPluginOutputSession
 
     public async Task<bool> SendAsync(ReadOnlyMemory<byte> channelValues, CancellationToken cancellationToken)
     {
-        int zones = Math.Max(1, this.light.ZoneCount);
+        int pixels = LifxPixelMap.PixelCount(this.light);
         int perPixel = this.mode.ChannelCount;
         ReadOnlySpan<byte> ch = channelValues.Span;
-        var colors = new Hsbk[zones];
-        for (int i = 0; i < zones; i++)
+        var pixelColors = new Hsbk[pixels];
+        for (int i = 0; i < pixels; i++)
         {
             // Pixels past the end of the slice read as black
             int o = Math.Min(i * perPixel, ch.Length);
-            colors[i] = this.mode.ToHsbk(ch[o..]);
+            pixelColors[i] = this.mode.ToHsbk(ch[o..]);
         }
+
+        // Dead zones (SuperColour Tube 2-4) stay black
+        Hsbk[] colors = LifxPixelMap.ToDeviceZones(this.light, pixelColors);
 
         try
         {

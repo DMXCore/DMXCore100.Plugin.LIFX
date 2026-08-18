@@ -609,6 +609,88 @@ public class LifxPluginTests
     }
 
     [TestMethod]
+    public void PixelMap_TubeExposes52OfItsReported55Zones()
+    {
+        LifxLight tube = RealTube();
+
+        Assert.AreEqual(52, LifxPixelMap.PixelCount(tube));
+        int[]? map = LifxPixelMap.DeviceIndexes(tube);
+        Assert.IsNotNull(map);
+        Assert.AreEqual(52, map.Length);
+        Assert.AreEqual(0, map[0]);
+        Assert.AreEqual(1, map[1]);
+        Assert.AreEqual(5, map[2]);
+        Assert.AreEqual(54, map[51]);
+        CollectionAssert.DoesNotContain(map, 2);
+        CollectionAssert.DoesNotContain(map, 3);
+        CollectionAssert.DoesNotContain(map, 4);
+    }
+
+    [TestMethod]
+    public void PixelMap_IsIdentityForOtherDevices()
+    {
+        Assert.IsNull(LifxPixelMap.DeviceIndexes(LinearBeam()));
+        Assert.AreEqual(8, LifxPixelMap.PixelCount(LinearBeam()));
+
+        // A Tube whose firmware reports something other than 5×11 is left
+        // alone rather than remapped on a guess
+        LifxLight oddTube = RealTube();
+        oddTube.ZoneCount = 52;
+        Assert.IsNull(LifxPixelMap.DeviceIndexes(oddTube));
+        Assert.AreEqual(52, LifxPixelMap.PixelCount(oddTube));
+    }
+
+    [TestMethod]
+    public async Task Tube_DiscoverAndChannelCountUse52Pixels()
+    {
+        var (_, host, _) = await CreateInitializedAsync([RealTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+
+        IReadOnlyList<PluginOutputDestinationOption>? options =
+            await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        Assert.IsNotNull(options);
+        Assert.AreEqual("Tube (192.168.1.31, LIFX SuperColour Tube, 52 px)", options[0].Label);
+        Assert.AreEqual("52", options[0].Options?[LifxPixelProtocol.PixelsOptionKey]);
+        Assert.AreEqual(156, protocol.GetChannelCount(Mapping("192.168.1.31")));
+    }
+
+    [TestMethod]
+    public async Task SendPixel_TubeSkipsDeadZones()
+    {
+        var (_, host, sent) = await CreateInitializedAsync([RealTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        // Distinct brightness per DMX pixel so the placement is verifiable:
+        // pixel p → red at (p + 1) * 4 (never 0)
+        byte[] channels = new byte[156];
+        for (int p = 0; p < 52; p++)
+        {
+            channels[p * 3] = (byte)((p + 1) * 4);
+        }
+
+        bool ok = await host.SimulateOutputDeliveryAsync(LifxPlugin.PixelProtocolId, Mapping("192.168.1.31"), channels);
+
+        Assert.IsTrue(ok);
+        byte[] set64 = sent.Select(item => item.Packet)
+            .First(item => LifxPackets.ReadMessageType(item) == LifxConstants.Set64);
+        // First Set64 packet: x=0, y=0, width 5, rows 0..11 → zones 0..54
+        int o = LifxConstants.HeaderSize;
+        Assert.AreEqual(5, set64[o + 5], "width");
+        ushort Brightness(int zone) => BinaryPrimitives.ReadUInt16LittleEndian(set64.AsSpan(o + 10 + (zone * 8) + 4, 2));
+        ushort Expected(int pixel) => LifxColor.RgbToHsbk((pixel + 1) * 4 / 255.0, 0, 0).Brightness;
+
+        Assert.AreEqual(Expected(0), Brightness(0), "pixel 0 → zone 0");
+        Assert.AreEqual(Expected(1), Brightness(1), "pixel 1 → zone 1");
+        Assert.AreEqual(0, Brightness(2), "zone 2 dead");
+        Assert.AreEqual(0, Brightness(3), "zone 3 dead");
+        Assert.AreEqual(0, Brightness(4), "zone 4 dead");
+        Assert.AreEqual(Expected(2), Brightness(5), "pixel 2 → zone 5");
+        Assert.AreEqual(Expected(51), Brightness(54), "pixel 51 → zone 54");
+    }
+
+    [TestMethod]
     public async Task PixelGetChannelCount_IgnoresPixelsOptionThatWouldOverflow()
     {
         var (_, host, _) = await CreateInitializedAsync();
@@ -822,6 +904,22 @@ public class LifxPluginTests
             MatrixHeight = 13,
             TileCount = 1,
             ZoneCount = 52,
+        };
+
+    /// <summary>
+    /// What a real SuperColour Tube reports: a 5×11 tile (55 zones) of
+    /// which 52 light (indexes 2-4 are dead).
+    /// </summary>
+    private static LifxLight RealTube() =>
+        new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.31", "Tube")
+        {
+            ModelName = "LIFX SuperColour Tube",
+            Product = 217,
+            Layout = LifxLayout.Matrix,
+            MatrixWidth = 5,
+            MatrixHeight = 11,
+            TileCount = 1,
+            ZoneCount = 55,
         };
 
     private static LifxLight LinearBeam() =>

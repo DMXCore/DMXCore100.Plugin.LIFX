@@ -339,7 +339,7 @@ internal sealed class LifxDiscovery
         string product = string.IsNullOrWhiteSpace(light.ModelName) ? "LIFX" : light.ModelName;
         if (light.ZoneCapable && light.ZoneCount > 1)
         {
-            return $"{name} ({light.Ip}, {product}, {light.ZoneCount} px)";
+            return $"{name} ({light.Ip}, {product}, {LifxPixelMap.PixelCount(light)} px)";
         }
 
         return $"{name} ({light.Ip}, {product})";

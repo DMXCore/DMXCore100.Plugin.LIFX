@@ -199,6 +199,12 @@ internal static class LifxProducts
         162, 203, 204, 205, 206, 207, 208, 211, 213, 214, 300,
     ];
 
+    /// <summary>
+    /// SuperColour Tube (US / Intl): reports a 5×11 tile but has 52 zones,
+    /// see <see cref="LifxPixelMap"/>.
+    /// </summary>
+    public static bool IsSuperColourTube(int product) => product is 217 or 218;
+
     public static string ModelName(int vendor, int product)
     {
         if (vendor != 1)
