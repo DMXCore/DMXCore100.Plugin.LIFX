@@ -54,6 +54,12 @@ public class LifxPluginTests
 
         Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorProtocolId));
         Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorCtProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorRgbwProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorRgbwCtProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.Color16ProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorCt16ProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorRgbw16ProtocolId));
+        Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.ColorRgbwCt16ProtocolId));
         Assert.IsTrue(host.OutputProtocols.ContainsKey(LifxPlugin.PixelProtocolId));
         Assert.IsTrue(host.FixtureProfiles.ContainsKey(LifxPlugin.ColorProfileCode));
         Assert.AreEqual(true, host.ConnectionState);
@@ -64,18 +70,29 @@ public class LifxPluginTests
         Assert.AreEqual(LifxConstants.MaxUpdatesPerSecond, color.MaxUpdatesPerSecond);
         Assert.IsTrue(color.SupportsDestinationDiscovery);
         Assert.AreEqual(LifxPlugin.ColorProfileCode, color.SuggestedProfileCode);
+        Assert.AreEqual("LIFX Color (single zone)", color.DisplayName);
         Assert.AreEqual("RGB", color.SuggestedPersonality);
         Assert.AreEqual("RGB+CT", host.OutputProtocols[LifxPlugin.ColorCtProtocolId].Descriptor.SuggestedPersonality);
+        Assert.AreEqual("LIFX Color + CT", host.OutputProtocols[LifxPlugin.ColorCtProtocolId].Descriptor.DisplayName);
+        Assert.AreEqual("RGBW", host.OutputProtocols[LifxPlugin.ColorRgbwProtocolId].Descriptor.SuggestedPersonality);
+        Assert.AreEqual("LIFX Color RGBW", host.OutputProtocols[LifxPlugin.ColorRgbwProtocolId].Descriptor.DisplayName);
+        Assert.AreEqual("RGBW+CT 16-bit", host.OutputProtocols[LifxPlugin.ColorRgbwCt16ProtocolId].Descriptor.SuggestedPersonality);
+        Assert.AreEqual("LIFX Color RGBW + CT 16-bit", host.OutputProtocols[LifxPlugin.ColorRgbwCt16ProtocolId].Descriptor.DisplayName);
 
         OutputProtocolDescriptor pixel = host.OutputProtocols[LifxPlugin.PixelProtocolId].Descriptor;
         Assert.AreEqual(LifxPlugin.PortType, pixel.PortType);
         Assert.IsTrue(pixel.SupportsDestinationDiscovery);
         Assert.IsTrue(string.IsNullOrEmpty(pixel.SuggestedProfileCode));
+        CollectionAssert.AreEqual(
+            new[] { LifxPixelProtocol.PixelsOptionKey, LifxPixelProtocol.SixteenBitOptionKey },
+            pixel.MappingFields!.Select(field => field.Key).ToArray());
+        Assert.AreEqual(PluginSettingType.Boolean, pixel.MappingFields![1].Type);
 
         PluginFixtureProfileDescriptor profile = host.FixtureProfiles[LifxPlugin.ColorProfileCode];
         Assert.AreEqual("LIFX", profile.Manufacturer);
-        Assert.AreEqual("RGB", profile.Personalities[0].Name);
-        Assert.AreEqual("RGB+CT", profile.Personalities[1].Name);
+        CollectionAssert.AreEqual(
+            new[] { "RGB", "RGB+CT", "RGBW", "RGBW+CT", "RGB 16-bit", "RGB+CT 16-bit", "RGBW 16-bit", "RGBW+CT 16-bit" },
+            profile.Personalities.Select(p => p.Name).ToArray());
         CollectionAssert.AreEqual(
             new[] { PluginFixtureFunction.Red, PluginFixtureFunction.Green, PluginFixtureFunction.Blue },
             profile.Personalities[0].Channels.ToArray());
@@ -88,6 +105,54 @@ public class LifxPluginTests
                 PluginFixtureFunction.ColorTemperature,
             },
             profile.Personalities[1].Channels.ToArray());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                PluginFixtureFunction.Red,
+                PluginFixtureFunction.Green,
+                PluginFixtureFunction.Blue,
+                PluginFixtureFunction.White,
+            },
+            profile.Personalities[2].Channels.ToArray());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                PluginFixtureFunction.Red,
+                PluginFixtureFunction.RedFine,
+                PluginFixtureFunction.Green,
+                PluginFixtureFunction.GreenFine,
+                PluginFixtureFunction.Blue,
+                PluginFixtureFunction.BlueFine,
+                PluginFixtureFunction.White,
+                PluginFixtureFunction.WhiteFine,
+                PluginFixtureFunction.ColorTemperature,
+                PluginFixtureFunction.ColorTemperatureFine,
+            },
+            profile.Personalities[7].Channels.ToArray());
+    }
+
+    [TestMethod]
+    public async Task Initialize_EveryColorProtocolHasAMatchingPersonality()
+    {
+        var (_, host, _) = await CreateInitializedAsync();
+        PluginFixtureProfileDescriptor profile = host.FixtureProfiles[LifxPlugin.ColorProfileCode];
+        PluginOutputMappingConfig config = Mapping("192.168.1.10");
+
+        foreach (LifxColorMode mode in LifxColorMode.All)
+        {
+            OutputProtocolDescriptor descriptor = host.OutputProtocols[mode.ProtocolId].Descriptor;
+            Assert.AreEqual(LifxPlugin.ColorProfileCode, descriptor.SuggestedProfileCode);
+            PluginFixturePersonality? personality = profile.Personalities
+                .SingleOrDefault(p => p.Name == descriptor.SuggestedPersonality);
+            Assert.IsNotNull(personality, mode.ProtocolId);
+
+            // The personality footprint and the protocol channel count must
+            // agree or the patch and the mapping drift apart
+            Assert.AreEqual(
+                personality.Channels.Count,
+                host.OutputProtocols[mode.ProtocolId].Protocol.GetChannelCount(config),
+                mode.ProtocolId);
+        }
     }
 
     [TestMethod]
@@ -98,6 +163,135 @@ public class LifxPluginTests
 
         Assert.AreEqual(3, Protocol(host, LifxPlugin.ColorProtocolId).GetChannelCount(config));
         Assert.AreEqual(4, Protocol(host, LifxPlugin.ColorCtProtocolId).GetChannelCount(config));
+        Assert.AreEqual(4, Protocol(host, LifxPlugin.ColorRgbwProtocolId).GetChannelCount(config));
+        Assert.AreEqual(5, Protocol(host, LifxPlugin.ColorRgbwCtProtocolId).GetChannelCount(config));
+        Assert.AreEqual(6, Protocol(host, LifxPlugin.Color16ProtocolId).GetChannelCount(config));
+        Assert.AreEqual(8, Protocol(host, LifxPlugin.ColorCt16ProtocolId).GetChannelCount(config));
+        Assert.AreEqual(8, Protocol(host, LifxPlugin.ColorRgbw16ProtocolId).GetChannelCount(config));
+        Assert.AreEqual(10, Protocol(host, LifxPlugin.ColorRgbwCt16ProtocolId).GetChannelCount(config));
+    }
+
+    [TestMethod]
+    public async Task SendRgbw_WhiteAloneIsFullBrightnessDesaturatedAtDefaultKelvin()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.ColorRgbwProtocolId,
+            Mapping("192.168.1.10"),
+            [0, 0, 0, 255]);
+
+        Assert.IsTrue(ok);
+        (_, ushort sat, ushort bri, ushort kelvin, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(0, sat);
+        Assert.AreEqual(65535, bri);
+        Assert.AreEqual(LifxConstants.DefaultKelvin, kelvin);
+    }
+
+    [TestMethod]
+    public async Task SendRgbw_WhiteDesaturatesTheColor()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+        Hsbk expected = LifxColor.RgbToHsbk(1.0, 0.5, 0.5);
+
+        // Half red plus half white = additive (1, 0.5, 0.5): a pastel red
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.ColorRgbwProtocolId,
+            Mapping("192.168.1.10"),
+            [128, 0, 0, 128]);
+
+        Assert.IsTrue(ok);
+        (ushort hue, ushort sat, ushort bri, _, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(expected.Hue, hue);
+        Assert.AreEqual(expected.Saturation, sat, 200);
+        Assert.AreEqual(expected.Brightness, bri, 200);
+    }
+
+    [TestMethod]
+    public async Task SendRgbwCt_WhiteFollowsColorTemperature()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.ColorRgbwCtProtocolId,
+            Mapping("192.168.1.10"),
+            [0, 0, 0, 255, 0]);
+
+        Assert.IsTrue(ok);
+        (_, ushort sat, ushort bri, ushort kelvin, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(0, sat);
+        Assert.AreEqual(65535, bri);
+        Assert.AreEqual(LifxConstants.KelvinMin, kelvin);
+    }
+
+    [TestMethod]
+    public async Task SendRgb16_UsesFineChannelsForBrightness()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+
+        // Red coarse 0x12, fine 0x34 → 0x1234 / 65535 → LIFX brightness 0x1234
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.Color16ProtocolId,
+            Mapping("192.168.1.10"),
+            [0x12, 0x34, 0, 0, 0, 0]);
+
+        Assert.IsTrue(ok);
+        (ushort hue, ushort sat, ushort bri, _, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(0, hue);
+        Assert.AreEqual(65535, sat);
+        Assert.AreEqual(0x1234, bri);
+    }
+
+    [TestMethod]
+    public async Task SendRgb16_ResolvesBelowOneEightBitStep()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+
+        // Coarse 0 with a non-zero fine byte must still light the bulb: that
+        // is the whole point of the 16-bit mode
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.Color16ProtocolId,
+            Mapping("192.168.1.10"),
+            [0, 0x80, 0, 0, 0, 0]);
+
+        Assert.IsTrue(ok);
+        (_, _, ushort bri, _, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(0x80, bri);
+    }
+
+    [TestMethod]
+    public async Task SendRgbwCt16_ReadsEveryFunctionAsCoarseFine()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+
+        // Only white (0xFFFF) and CT (0xFFFF): a cool full white
+        bool ok = await host.SimulateOutputDeliveryAsync(
+            LifxPlugin.ColorRgbwCt16ProtocolId,
+            Mapping("192.168.1.10"),
+            [0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+
+        Assert.IsTrue(ok);
+        (_, ushort sat, ushort bri, ushort kelvin, _) = ReadSetColor(AssertSetColor(sent));
+        Assert.AreEqual(0, sat);
+        Assert.AreEqual(65535, bri);
+        Assert.AreEqual(LifxConstants.KelvinMax, kelvin);
+    }
+
+    [TestMethod]
+    public async Task Send_RejectsShortSliceForEveryMode()
+    {
+        var (_, host, sent) = await CreateInitializedAsync();
+
+        foreach (LifxColorMode mode in LifxColorMode.All)
+        {
+            bool ok = await host.SimulateOutputDeliveryAsync(
+                mode.ProtocolId,
+                Mapping("192.168.1.10"),
+                new byte[mode.ChannelCount - 1]);
+            Assert.IsFalse(ok, mode.ProtocolId);
+        }
+
+        Assert.AreEqual(0, sent.Count);
     }
 
     [TestMethod]
@@ -355,6 +549,63 @@ public class LifxPluginTests
 
         Assert.AreEqual(156, protocol.GetChannelCount(config));
         Assert.AreEqual(0, protocol.GetChannelCount(Mapping("192.168.1.30")));
+    }
+
+    [TestMethod]
+    public async Task PixelGetChannelCount_SixteenBitDoublesTheFootprint()
+    {
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        PluginOutputMappingConfig fromDiscovery = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string> { [LifxPixelProtocol.SixteenBitOptionKey] = "true" },
+        };
+        PluginOutputMappingConfig fromStoredPixels = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string>
+            {
+                [LifxPixelProtocol.PixelsOptionKey] = "52",
+                [LifxPixelProtocol.SixteenBitOptionKey] = "true",
+            },
+        };
+        PluginOutputMappingConfig eightBit = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string> { [LifxPixelProtocol.SixteenBitOptionKey] = "false" },
+        };
+
+        Assert.AreEqual(312, protocol.GetChannelCount(fromDiscovery));
+        Assert.AreEqual(312, protocol.GetChannelCount(fromStoredPixels));
+        Assert.AreEqual(156, protocol.GetChannelCount(eightBit));
+    }
+
+    [TestMethod]
+    public async Task SendPixel16_DecodesCoarseFinePerComponent()
+    {
+        var (_, host, sent) = await CreateInitializedAsync([LinearBeam()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+        PluginOutputMappingConfig config = Mapping("192.168.1.40") with
+        {
+            Options = new Dictionary<string, string> { [LifxPixelProtocol.SixteenBitOptionKey] = "true" },
+        };
+
+        // Zone 0: red 0x1234; zone 1: fine-only red 0x0080; others black
+        byte[] channels = new byte[48];
+        channels[0] = 0x12;
+        channels[1] = 0x34;
+        channels[7] = 0x80;
+
+        bool ok = await host.SimulateOutputDeliveryAsync(LifxPlugin.PixelProtocolId, config, channels);
+
+        Assert.IsTrue(ok);
+        byte[] mz = sent.Select(item => item.Packet)
+            .First(item => LifxPackets.ReadMessageType(item) == LifxConstants.SetExtendedColorZones);
+        int colors = LifxConstants.HeaderSize + 8;
+        Assert.AreEqual(0x1234, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 4, 2)), "zone 0 brightness");
+        Assert.AreEqual(0x0080, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 8 + 4, 2)), "zone 1 brightness");
+        Assert.AreEqual(0, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 16 + 4, 2)), "zone 2 brightness");
     }
 
     [TestMethod]

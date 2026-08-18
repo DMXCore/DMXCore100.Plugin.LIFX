@@ -12,6 +12,12 @@ public class LifxPlugin : IPlugin
 {
     public const string ColorProtocolId = "LIFX_COLOR";
     public const string ColorCtProtocolId = "LIFX_COLOR_CT";
+    public const string ColorRgbwProtocolId = "LIFX_COLOR_RGBW";
+    public const string ColorRgbwCtProtocolId = "LIFX_COLOR_RGBW_CT";
+    public const string Color16ProtocolId = "LIFX_COLOR_16";
+    public const string ColorCt16ProtocolId = "LIFX_COLOR_CT_16";
+    public const string ColorRgbw16ProtocolId = "LIFX_COLOR_RGBW_16";
+    public const string ColorRgbwCt16ProtocolId = "LIFX_COLOR_RGBW_CT_16";
     public const string PixelProtocolId = "LIFX_PIXEL";
     public const string ColorProfileCode = "LIFX_COLOR";
     public const string PortType = "LIFX";
@@ -72,44 +78,28 @@ public class LifxPlugin : IPlugin
             }
         };
 
+        // One profile personality per color protocol, same name, so the
+        // fixture editor can prefill the personality from a mapping
         this.registrations.Add(host.Outputs.RegisterFixtureProfile(new PluginFixtureProfileDescriptor
         {
             Code = ColorProfileCode,
             Name = "Color Bulb",
             Manufacturer = "LIFX",
-            Personalities =
-            [
-                new PluginFixturePersonality
+            Personalities = LifxColorMode.All
+                .Select(static mode => new PluginFixturePersonality
                 {
-                    Name = "RGB",
-                    Channels =
-                    [
-                        PluginFixtureFunction.Red,
-                        PluginFixtureFunction.Green,
-                        PluginFixtureFunction.Blue,
-                    ],
-                },
-                new PluginFixturePersonality
-                {
-                    Name = "RGB+CT",
-                    Channels =
-                    [
-                        PluginFixtureFunction.Red,
-                        PluginFixtureFunction.Green,
-                        PluginFixtureFunction.Blue,
-                        PluginFixtureFunction.ColorTemperature,
-                    ],
-                },
-            ],
+                    Name = mode.Personality,
+                    Channels = mode.ProfileChannels(),
+                })
+                .ToArray(),
         }));
 
-        this.registrations.Add(host.Outputs.RegisterOutputProtocol(
-            Descriptor(ColorProtocolId, "LIFX Color (single zone)", "RGB"),
-            new LifxColorProtocol(LifxColorMode.Rgb, discovery, this.sendOverride)));
-
-        this.registrations.Add(host.Outputs.RegisterOutputProtocol(
-            Descriptor(ColorCtProtocolId, "LIFX Color + CT", "RGB+CT"),
-            new LifxColorProtocol(LifxColorMode.RgbCt, discovery, this.sendOverride)));
+        foreach (LifxColorMode mode in LifxColorMode.All)
+        {
+            this.registrations.Add(host.Outputs.RegisterOutputProtocol(
+                Descriptor(mode.ProtocolId, ColorDisplayName(mode), mode.Personality),
+                new LifxColorProtocol(mode, discovery, this.sendOverride)));
+        }
 
         this.registrations.Add(host.Outputs.RegisterOutputProtocol(
             PixelDescriptor(),
@@ -176,8 +166,40 @@ public class LifxPlugin : IPlugin
                     Type = PluginSettingType.Integer,
                     Description = "Pixel count of the device; filled automatically when a discovered device is picked",
                 },
+                new PluginSettingDescriptor
+                {
+                    Key = LifxPixelProtocol.SixteenBitOptionKey,
+                    Label = "16-bit",
+                    Type = PluginSettingType.Boolean,
+                    Description = "Six channels per pixel (red, red fine, green, green fine, blue, blue fine) instead of three",
+                },
             ],
         };
+
+    /// <summary>
+    /// Dropdown name of a color protocol. The two original modes keep the
+    /// names they shipped with; the rest spell out white / CT / bit depth.
+    /// </summary>
+    private static string ColorDisplayName(LifxColorMode mode)
+    {
+        if (mode == LifxColorMode.Rgb)
+        {
+            return "LIFX Color (single zone)";
+        }
+
+        string name = mode.HasWhite ? "LIFX Color RGBW" : "LIFX Color";
+        if (mode.HasColorTemperature)
+        {
+            name += " + CT";
+        }
+
+        if (mode.SixteenBit)
+        {
+            name += " 16-bit";
+        }
+
+        return name;
+    }
 
     private static OutputProtocolDescriptor Descriptor(string id, string displayName, string personality) =>
         new()

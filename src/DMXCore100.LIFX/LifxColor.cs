@@ -23,12 +23,30 @@ internal static class LifxColor
     }
 
     /// <summary>
+    /// RGB plus a White channel → HSBK. White is mixed additively (the way an
+    /// RGBW LED fixture behaves): it lifts every component equally, so it
+    /// desaturates the color and raises brightness, and the resulting white
+    /// portion is rendered by the bulb at <paramref name="kelvin"/>.
+    /// </summary>
+    public static Hsbk RgbwToHsbk(double r, double g, double b, double w, int kelvin = LifxConstants.DefaultKelvin)
+    {
+        w = Clamp01(w);
+        return RgbToHsbk(r + w, g + w, b + w, kelvin);
+    }
+
+    /// <summary>
     /// Map an 8-bit ColorTemperature channel onto LIFX kelvin (warm at 0,
     /// cool at 255).
     /// </summary>
-    public static int KelvinFromDmx(byte value)
+    public static int KelvinFromDmx(byte value) => KelvinFromUnit(value / 255.0);
+
+    /// <summary>
+    /// Map a 0..1 ColorTemperature value onto LIFX kelvin (warm at 0, cool
+    /// at 1).
+    /// </summary>
+    public static int KelvinFromUnit(double t)
     {
-        double t = value / 255.0;
+        t = Clamp01(t);
         return (int)Math.Round(LifxConstants.KelvinMin + (t * (LifxConstants.KelvinMax - LifxConstants.KelvinMin)));
     }
 

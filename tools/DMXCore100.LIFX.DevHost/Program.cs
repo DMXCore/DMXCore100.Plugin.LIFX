@@ -124,6 +124,58 @@ try
                     Console.WriteLine(ctOk ? "  sent" : "  send failed");
                     break;
 
+                case "sendrgbw":
+                    if (parts.Length < 6
+                        || !byte.TryParse(parts[2], out byte wr)
+                        || !byte.TryParse(parts[3], out byte wg)
+                        || !byte.TryParse(parts[4], out byte wb)
+                        || !byte.TryParse(parts[5], out byte ww))
+                    {
+                        Console.WriteLine("usage: sendrgbw <ip> <r> <g> <b> <w>");
+                        break;
+                    }
+
+                    bool rgbwOk = await host.SimulateOutputDeliveryAsync(
+                        LifxPlugin.ColorRgbwProtocolId,
+                        Mapping(parts[1]),
+                        [wr, wg, wb, ww],
+                        cts.Token);
+                    Console.WriteLine(rgbwOk ? "  sent" : "  send failed");
+                    break;
+
+                case "sendmode":
+                {
+                    // Any color protocol by id with a raw channel slice, e.g.
+                    // sendmode LIFX_COLOR_16 192.168.1.10 255 0 0 0 0 0
+                    if (parts.Length < 4 || !host.OutputProtocols.ContainsKey(parts[1].ToUpperInvariant()))
+                    {
+                        Console.WriteLine("usage: sendmode <protocolId> <ip> <ch1> <ch2> ... (0-255 each)");
+                        Console.WriteLine($"  protocols: {string.Join(", ", host.OutputProtocols.Keys)}");
+                        break;
+                    }
+
+                    byte[] slice = new byte[parts.Length - 3];
+                    bool parsed = true;
+                    for (int i = 0; i < slice.Length && parsed; i++)
+                    {
+                        parsed = byte.TryParse(parts[i + 3], out slice[i]);
+                    }
+
+                    if (!parsed)
+                    {
+                        Console.WriteLine("  channel values must be 0-255");
+                        break;
+                    }
+
+                    bool modeOk = await host.SimulateOutputDeliveryAsync(
+                        parts[1].ToUpperInvariant(),
+                        Mapping(parts[2]),
+                        slice,
+                        cts.Token);
+                    Console.WriteLine(modeOk ? "  sent" : "  send failed (short slice, or no cached pixel device)");
+                    break;
+                }
+
                 case "sendpixel":
                     if (parts.Length < 5
                         || !byte.TryParse(parts[2], out byte pr)
@@ -232,6 +284,9 @@ static void PrintHelp()
           discover                 broadcast-discover LIFX lights (pixel devices listed separately)
           send <ip> r g b          LIFX_COLOR SetColor (0-255)
           sendct <ip> r g b ct     LIFX_COLOR_CT, ct 0=warm 255=cool
+          sendrgbw <ip> r g b w    LIFX_COLOR_RGBW, white mixed additively
+          sendmode <proto> <ip> ch...  any protocol id with a raw slice, e.g.
+                                   sendmode LIFX_COLOR_16 <ip> 255 0 0 0 0 0
           sendpixel <ip> r g b     LIFX_PIXEL fill all zones (Tube / Beam / strip)
           r                        shutdown + initialize again (no assembly unload)
           i                        show device info

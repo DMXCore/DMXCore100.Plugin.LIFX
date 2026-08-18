@@ -4,15 +4,10 @@ using DMXCore.PluginSdk;
 
 namespace DMXCore100.LIFX;
 
-internal enum LifxColorMode
-{
-    Rgb = 3,
-    RgbCt = 4,
-}
-
 /// <summary>
-/// Single-zone LIFX color output: RGB or RGB+CT channel slices become
-/// SetColor UDP datagrams to port 56700.
+/// Single-zone LIFX color output: an RGB / RGBW (+CT) channel slice, 8- or
+/// 16-bit per the <see cref="LifxColorMode"/>, becomes SetColor UDP
+/// datagrams to port 56700.
 /// </summary>
 internal sealed class LifxColorProtocol : IPluginOutputProtocol
 {
@@ -27,7 +22,7 @@ internal sealed class LifxColorProtocol : IPluginOutputProtocol
         this.sender = sender;
     }
 
-    public int GetChannelCount(PluginOutputMappingConfig config) => (int)this.mode;
+    public int GetChannelCount(PluginOutputMappingConfig config) => this.mode.ChannelCount;
 
     public Task<IPluginOutputSession> OpenSessionAsync(
         PluginOutputMappingConfig config,
@@ -75,22 +70,12 @@ internal sealed class LifxColorSession : IPluginOutputSession
     public async Task<bool> SendAsync(ReadOnlyMemory<byte> channelValues, CancellationToken cancellationToken)
     {
         ReadOnlySpan<byte> ch = channelValues.Span;
-        if (ch.Length < (int)this.mode)
+        if (ch.Length < this.mode.ChannelCount)
         {
             return false;
         }
 
-        byte red = ch[0];
-        byte green = ch[1];
-        byte blue = ch[2];
-        int kelvin = this.mode switch
-        {
-            LifxColorMode.Rgb => LifxConstants.DefaultKelvin,
-            LifxColorMode.RgbCt => LifxColor.KelvinFromDmx(ch[3]),
-            _ => throw Unexpected(this.mode),
-        };
-
-        Hsbk color = LifxColor.RgbToHsbk(red / 255.0, green / 255.0, blue / 255.0, kelvin);
+        Hsbk color = this.mode.ToHsbk(ch);
 
         try
         {
@@ -120,7 +105,4 @@ internal sealed class LifxColorSession : IPluginOutputSession
     }
 
     public ValueTask DisposeAsync() => this.io.DisposeAsync();
-
-    private static InvalidOperationException Unexpected(LifxColorMode mode) =>
-        new($"Unhandled color mode {mode}");
 }

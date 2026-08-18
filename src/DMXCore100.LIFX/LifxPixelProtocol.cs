@@ -6,11 +6,13 @@ namespace DMXCore100.LIFX;
 
 /// <summary>
 /// Multipixel LIFX output for SuperColour Tube/Luna, Beam, strips, and tiles.
-/// Channel count is pixels × 3 from discovered zone geometry.
+/// Channel count is pixels × 3 (RGB) or pixels × 6 (16-bit RGB, coarse then
+/// fine per component) from discovered zone geometry.
 /// </summary>
 internal sealed class LifxPixelProtocol : IPluginOutputProtocol
 {
     public const string PixelsOptionKey = "pixels";
+    public const string SixteenBitOptionKey = "sixteenBit";
 
     private readonly LifxDiscovery discovery;
     private readonly LifxDatagramSender? sender;
@@ -21,6 +23,17 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
         this.sender = sender;
     }
 
+    /// <summary>
+    /// Whether the mapping's 16-bit toggle is on (a Boolean mapping field
+    /// stores "true"/"false"; absent means 8-bit).
+    /// </summary>
+    public static bool IsSixteenBit(PluginOutputMappingConfig config) =>
+        config.Options.TryGetValue(SixteenBitOptionKey, out string? stored)
+        && bool.TryParse(stored, out bool sixteenBit)
+        && sixteenBit;
+
+    public static int ChannelsPerPixel(bool sixteenBit) => sixteenBit ? 6 : 3;
+
     public int GetChannelCount(PluginOutputMappingConfig config)
     {
         if (string.IsNullOrWhiteSpace(config.DestinationAddress))
@@ -28,15 +41,17 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
             return 0;
         }
 
+        int perPixel = ChannelsPerPixel(IsSixteenBit(config));
+
         // The stored mapping option is authoritative: it survives restarts
         // and is stamped by Discover, so the channel count never depends on
         // the RAM discovery cache
         if (config.Options.TryGetValue(PixelsOptionKey, out string? stored)
             && int.TryParse(stored, out int pixels)
             && pixels > 0
-            && pixels <= int.MaxValue / 3)
+            && pixels <= int.MaxValue / perPixel)
         {
-            return pixels * 3;
+            return pixels * perPixel;
         }
 
         LifxLight? light = this.discovery.LightFor(config.DestinationAddress.Trim());
@@ -45,7 +60,7 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
             return 0;
         }
 
-        return Math.Max(1, light.ZoneCount) * 3;
+        return Math.Max(1, light.ZoneCount) * perPixel;
     }
 
     public async Task<IPluginOutputSession> OpenSessionAsync(
@@ -67,7 +82,7 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
                 $"No pixel LIFX device is cached at '{ip}'. Run Discover on the LIFX Pixel protocol first.");
         }
 
-        return new LifxPixelSession(endpoint, light, this.sender);
+        return new LifxPixelSession(endpoint, light, IsSixteenBit(config), this.sender);
     }
 
     public async Task<IReadOnlyList<PluginOutputDestinationOption>?> GetDestinationOptionsAsync(
@@ -96,28 +111,29 @@ internal sealed class LifxPixelSession : IPluginOutputSession
 {
     private readonly IPEndPoint endpoint;
     private readonly LifxLight light;
+    private readonly LifxColorMode mode;
     private readonly LifxSessionIo io;
     private bool powered;
 
-    public LifxPixelSession(IPEndPoint endpoint, LifxLight light, LifxDatagramSender? sender)
+    public LifxPixelSession(IPEndPoint endpoint, LifxLight light, bool sixteenBit, LifxDatagramSender? sender)
     {
         this.endpoint = endpoint;
         this.light = light;
+        this.mode = sixteenBit ? LifxColorMode.Rgb16 : LifxColorMode.Rgb;
         this.io = new LifxSessionIo(endpoint, sender);
     }
 
     public async Task<bool> SendAsync(ReadOnlyMemory<byte> channelValues, CancellationToken cancellationToken)
     {
         int zones = Math.Max(1, this.light.ZoneCount);
+        int perPixel = this.mode.ChannelCount;
         ReadOnlySpan<byte> ch = channelValues.Span;
         var colors = new Hsbk[zones];
         for (int i = 0; i < zones; i++)
         {
-            int o = i * 3;
-            byte red = o < ch.Length ? ch[o] : (byte)0;
-            byte green = o + 1 < ch.Length ? ch[o + 1] : (byte)0;
-            byte blue = o + 2 < ch.Length ? ch[o + 2] : (byte)0;
-            colors[i] = LifxColor.RgbToHsbk(red / 255.0, green / 255.0, blue / 255.0);
+            // Pixels past the end of the slice read as black
+            int o = Math.Min(i * perPixel, ch.Length);
+            colors[i] = this.mode.ToHsbk(ch[o..]);
         }
 
         try
