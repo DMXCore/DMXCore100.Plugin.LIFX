@@ -168,10 +168,14 @@ public class LifxPlugin : IPlugin
                 },
                 new PluginSettingDescriptor
                 {
-                    Key = LifxPixelProtocol.SixteenBitOptionKey,
-                    Label = "16-bit",
-                    Type = PluginSettingType.Boolean,
-                    Description = "Six channels per pixel (red, red fine, green, green fine, blue, blue fine) instead of three",
+                    Key = LifxPixelProtocol.ColorModeOptionKey,
+                    Label = "Color mode",
+                    Type = PluginSettingType.Choice,
+                    DefaultValue = LifxColorMode.Rgb.OptionValue,
+                    Description = "Channels per pixel: RGB (3), RGB+CT (4), RGBW (4), or RGBW+CT (5); 16-bit doubles that with a fine channel after each coarse one. Match the fixture's personality.",
+                    Choices = LifxColorMode.All
+                        .Select(static mode => new PluginSettingChoice(mode.OptionValue, mode.Personality))
+                        .ToArray(),
                 },
             ],
         };

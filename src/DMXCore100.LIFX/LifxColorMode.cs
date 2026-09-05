@@ -3,22 +3,30 @@ using DMXCore.PluginSdk;
 namespace DMXCore100.LIFX;
 
 /// <summary>
-/// Channel layout of one single-zone LIFX color protocol: RGB, optionally a
-/// White channel (mixed additively into the color), optionally a
-/// ColorTemperature channel (kelvin of the white portion), each 8- or 16-bit.
-/// In 16-bit layouts every function takes two adjacent channels, coarse then
-/// fine, in the same order as the 8-bit layout.
+/// Channel layout of one LIFX color slice: RGB, optionally a White channel
+/// (mixed additively into the color), optionally a ColorTemperature channel
+/// (kelvin of the white portion), each 8- or 16-bit. In 16-bit layouts every
+/// function takes two adjacent channels, coarse then fine, in the same order
+/// as the 8-bit layout. Each mode is one single-zone color protocol
+/// (<see cref="ProtocolId"/>) and one per-pixel layout of the Pixel protocol
+/// (selected through its Color mode mapping field as <see cref="OptionValue"/>).
 /// </summary>
-internal sealed record LifxColorMode(string ProtocolId, string Personality, bool HasWhite, bool HasColorTemperature, bool SixteenBit)
+internal sealed record LifxColorMode(
+    string ProtocolId,
+    string OptionValue,
+    string Personality,
+    bool HasWhite,
+    bool HasColorTemperature,
+    bool SixteenBit)
 {
-    public static readonly LifxColorMode Rgb = new(LifxPlugin.ColorProtocolId, "RGB", false, false, false);
-    public static readonly LifxColorMode RgbCt = new(LifxPlugin.ColorCtProtocolId, "RGB+CT", false, true, false);
-    public static readonly LifxColorMode Rgbw = new(LifxPlugin.ColorRgbwProtocolId, "RGBW", true, false, false);
-    public static readonly LifxColorMode RgbwCt = new(LifxPlugin.ColorRgbwCtProtocolId, "RGBW+CT", true, true, false);
-    public static readonly LifxColorMode Rgb16 = new(LifxPlugin.Color16ProtocolId, "RGB 16-bit", false, false, true);
-    public static readonly LifxColorMode RgbCt16 = new(LifxPlugin.ColorCt16ProtocolId, "RGB+CT 16-bit", false, true, true);
-    public static readonly LifxColorMode Rgbw16 = new(LifxPlugin.ColorRgbw16ProtocolId, "RGBW 16-bit", true, false, true);
-    public static readonly LifxColorMode RgbwCt16 = new(LifxPlugin.ColorRgbwCt16ProtocolId, "RGBW+CT 16-bit", true, true, true);
+    public static readonly LifxColorMode Rgb = new(LifxPlugin.ColorProtocolId, "RGB", "RGB", false, false, false);
+    public static readonly LifxColorMode RgbCt = new(LifxPlugin.ColorCtProtocolId, "RGB_CT", "RGB+CT", false, true, false);
+    public static readonly LifxColorMode Rgbw = new(LifxPlugin.ColorRgbwProtocolId, "RGBW", "RGBW", true, false, false);
+    public static readonly LifxColorMode RgbwCt = new(LifxPlugin.ColorRgbwCtProtocolId, "RGBW_CT", "RGBW+CT", true, true, false);
+    public static readonly LifxColorMode Rgb16 = new(LifxPlugin.Color16ProtocolId, "RGB_16", "RGB 16-bit", false, false, true);
+    public static readonly LifxColorMode RgbCt16 = new(LifxPlugin.ColorCt16ProtocolId, "RGB_CT_16", "RGB+CT 16-bit", false, true, true);
+    public static readonly LifxColorMode Rgbw16 = new(LifxPlugin.ColorRgbw16ProtocolId, "RGBW_16", "RGBW 16-bit", true, false, true);
+    public static readonly LifxColorMode RgbwCt16 = new(LifxPlugin.ColorRgbwCt16ProtocolId, "RGBW_CT_16", "RGBW+CT 16-bit", true, true, true);
 
     /// <summary>
     /// Every mode, in the order the protocols are registered and the profile
@@ -35,6 +43,22 @@ internal sealed record LifxColorMode(string ProtocolId, string Personality, bool
         Rgbw16,
         RgbwCt16,
     ];
+
+    /// <summary>
+    /// The mode whose <see cref="OptionValue"/> a Pixel mapping stores, or
+    /// null when the value is absent or unknown.
+    /// </summary>
+    public static LifxColorMode? FromOptionValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        string trimmed = value.Trim();
+
+        return All.FirstOrDefault(mode => string.Equals(mode.OptionValue, trimmed, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Bytes per function: 1 (8-bit) or 2 (16-bit, coarse then fine).

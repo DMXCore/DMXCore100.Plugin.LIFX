@@ -84,9 +84,17 @@ public class LifxPluginTests
         Assert.IsTrue(pixel.SupportsDestinationDiscovery);
         Assert.IsTrue(string.IsNullOrEmpty(pixel.SuggestedProfileCode));
         CollectionAssert.AreEqual(
-            new[] { LifxPixelProtocol.PixelsOptionKey, LifxPixelProtocol.SixteenBitOptionKey },
+            new[] { LifxPixelProtocol.PixelsOptionKey, LifxPixelProtocol.ColorModeOptionKey },
             pixel.MappingFields!.Select(field => field.Key).ToArray());
-        Assert.AreEqual(PluginSettingType.Boolean, pixel.MappingFields![1].Type);
+        PluginSettingDescriptor colorMode = pixel.MappingFields![1];
+        Assert.AreEqual(PluginSettingType.Choice, colorMode.Type);
+        Assert.AreEqual("RGB", colorMode.DefaultValue);
+        CollectionAssert.AreEqual(
+            new[] { "RGB", "RGB_CT", "RGBW", "RGBW_CT", "RGB_16", "RGB_CT_16", "RGBW_16", "RGBW_CT_16" },
+            colorMode.Choices.Select(choice => choice.Value).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "RGB", "RGB+CT", "RGBW", "RGBW+CT", "RGB 16-bit", "RGB+CT 16-bit", "RGBW 16-bit", "RGBW+CT 16-bit" },
+            colorMode.Choices.Select(choice => choice.Label).ToArray());
 
         PluginFixtureProfileDescriptor profile = host.FixtureProfiles[LifxPlugin.ColorProfileCode];
         Assert.AreEqual("LIFX", profile.Manufacturer);
@@ -552,7 +560,70 @@ public class LifxPluginTests
     }
 
     [TestMethod]
-    public async Task PixelGetChannelCount_SixteenBitDoublesTheFootprint()
+    public async Task PixelGetChannelCount_FollowsColorMode()
+    {
+        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+
+        int CountFor(string colorMode) => protocol.GetChannelCount(Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string> { [LifxPixelProtocol.ColorModeOptionKey] = colorMode },
+        });
+
+        Assert.AreEqual(52 * 3, CountFor("RGB"));
+        Assert.AreEqual(52 * 4, CountFor("RGBW"));
+        Assert.AreEqual(52 * 4, CountFor("RGB_CT"));
+        Assert.AreEqual(52 * 5, CountFor("RGBW_CT"));
+        Assert.AreEqual(52 * 6, CountFor("RGB_16"));
+        Assert.AreEqual(52 * 8, CountFor("RGBW_16"));
+        Assert.AreEqual(52 * 8, CountFor("RGB_CT_16"));
+        Assert.AreEqual(52 * 10, CountFor("RGBW_CT_16"));
+        Assert.AreEqual(52 * 8, CountFor("rgbw_16"), "option value is case-insensitive");
+        Assert.AreEqual(52 * 3, CountFor("BOGUS"), "unknown value falls back to RGB");
+
+        PluginOutputMappingConfig modeWinsOverLegacyToggle = Mapping("192.168.1.30") with
+        {
+            Options = new Dictionary<string, string>
+            {
+                [LifxPixelProtocol.ColorModeOptionKey] = "RGBW",
+                [LifxPixelProtocol.SixteenBitOptionKey] = "true",
+            },
+        };
+        Assert.AreEqual(52 * 4, protocol.GetChannelCount(modeWinsOverLegacyToggle));
+    }
+
+    [TestMethod]
+    public async Task SendPixelRgbw_MixesWhiteAdditively()
+    {
+        var (_, host, sent) = await CreateInitializedAsync([LinearBeam()]);
+        IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
+        _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
+        PluginOutputMappingConfig config = Mapping("192.168.1.40") with
+        {
+            Options = new Dictionary<string, string> { [LifxPixelProtocol.ColorModeOptionKey] = "RGBW" },
+        };
+
+        // Zone 0: white only; zone 1: full red; others black (4 ch per pixel)
+        byte[] channels = new byte[32];
+        channels[3] = 255;
+        channels[4] = 255;
+
+        bool ok = await host.SimulateOutputDeliveryAsync(LifxPlugin.PixelProtocolId, config, channels);
+
+        Assert.IsTrue(ok);
+        byte[] mz = sent.Select(item => item.Packet)
+            .First(item => LifxPackets.ReadMessageType(item) == LifxConstants.SetExtendedColorZones);
+        int colors = LifxConstants.HeaderSize + 8;
+        Assert.AreEqual(0, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 2, 2)), "zone 0 saturation (white)");
+        Assert.AreEqual(0xFFFF, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 4, 2)), "zone 0 brightness");
+        Assert.AreEqual(0xFFFF, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 8 + 2, 2)), "zone 1 saturation (red)");
+        Assert.AreEqual(0xFFFF, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 8 + 4, 2)), "zone 1 brightness");
+        Assert.AreEqual(0, BinaryPrimitives.ReadUInt16LittleEndian(mz.AsSpan(colors + 16 + 4, 2)), "zone 2 brightness");
+    }
+
+    [TestMethod]
+    public async Task PixelGetChannelCount_LegacySixteenBitToggleStillDoublesTheFootprint()
     {
         var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
         IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);

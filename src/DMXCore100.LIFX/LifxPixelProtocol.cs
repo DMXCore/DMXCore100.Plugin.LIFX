@@ -6,12 +6,19 @@ namespace DMXCore100.LIFX;
 
 /// <summary>
 /// Multipixel LIFX output for SuperColour Tube/Luna, Beam, strips, and tiles.
-/// Channel count is pixels × 3 (RGB) or pixels × 6 (16-bit RGB, coarse then
-/// fine per component) from discovered zone geometry.
+/// Channel count is pixels × the per-pixel width of the mapping's Color mode
+/// (RGB, RGBW, +CT, 8- or 16-bit) from discovered zone geometry.
 /// </summary>
 internal sealed class LifxPixelProtocol : IPluginOutputProtocol
 {
     public const string PixelsOptionKey = "pixels";
+    public const string ColorModeOptionKey = "colorMode";
+
+    /// <summary>
+    /// The Boolean 16-bit toggle that preceded the Color mode field. Still
+    /// honored (as RGB 16-bit) for mappings saved before it existed; the
+    /// Color mode field wins whenever it is set.
+    /// </summary>
     public const string SixteenBitOptionKey = "sixteenBit";
 
     private readonly LifxDiscovery discovery;
@@ -24,15 +31,23 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
     }
 
     /// <summary>
-    /// Whether the mapping's 16-bit toggle is on (a Boolean mapping field
-    /// stores "true"/"false"; absent means 8-bit).
+    /// The per-pixel channel layout of a mapping: its Color mode field, else
+    /// the legacy 16-bit toggle (RGB 16-bit when on), else RGB.
     /// </summary>
-    public static bool IsSixteenBit(PluginOutputMappingConfig config) =>
-        config.Options.TryGetValue(SixteenBitOptionKey, out string? stored)
-        && bool.TryParse(stored, out bool sixteenBit)
-        && sixteenBit;
+    public static LifxColorMode ColorModeOf(PluginOutputMappingConfig config)
+    {
+        if (config.Options.TryGetValue(ColorModeOptionKey, out string? storedMode)
+            && LifxColorMode.FromOptionValue(storedMode) is LifxColorMode mode)
+        {
+            return mode;
+        }
 
-    public static int ChannelsPerPixel(bool sixteenBit) => sixteenBit ? 6 : 3;
+        bool legacySixteenBit = config.Options.TryGetValue(SixteenBitOptionKey, out string? stored)
+            && bool.TryParse(stored, out bool sixteenBit)
+            && sixteenBit;
+
+        return legacySixteenBit ? LifxColorMode.Rgb16 : LifxColorMode.Rgb;
+    }
 
     public int GetChannelCount(PluginOutputMappingConfig config)
     {
@@ -41,7 +56,7 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
             return 0;
         }
 
-        int perPixel = ChannelsPerPixel(IsSixteenBit(config));
+        int perPixel = ColorModeOf(config).ChannelCount;
 
         // The stored mapping option is authoritative: it survives restarts
         // and is stamped by Discover, so the channel count never depends on
@@ -82,7 +97,7 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
                 $"No pixel LIFX device is cached at '{ip}'. Run Discover on the LIFX Pixel protocol first.");
         }
 
-        return new LifxPixelSession(endpoint, light, IsSixteenBit(config), this.sender);
+        return new LifxPixelSession(endpoint, light, ColorModeOf(config), this.sender);
     }
 
     public async Task<IReadOnlyList<PluginOutputDestinationOption>?> GetDestinationOptionsAsync(
@@ -115,11 +130,11 @@ internal sealed class LifxPixelSession : IPluginOutputSession
     private readonly LifxSessionIo io;
     private bool powered;
 
-    public LifxPixelSession(IPEndPoint endpoint, LifxLight light, bool sixteenBit, LifxDatagramSender? sender)
+    public LifxPixelSession(IPEndPoint endpoint, LifxLight light, LifxColorMode mode, LifxDatagramSender? sender)
     {
         this.endpoint = endpoint;
         this.light = light;
-        this.mode = sixteenBit ? LifxColorMode.Rgb16 : LifxColorMode.Rgb;
+        this.mode = mode;
         this.io = new LifxSessionIo(endpoint, sender);
     }
 

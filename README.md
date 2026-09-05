@@ -14,19 +14,21 @@ On the Core's **Outputs** page, add an output of type **LIFX**:
 
 1. **Protocol** — Color (RGB), Color + CT (RGB + color temperature),
    Color RGBW, Color RGBW + CT — each in 8-bit or **16-bit** — or Pixel
-   (RGB × discovered zones, 8- or 16-bit).
+   (one color slice per discovered zone, in the mapping's **Color mode**).
 2. **Destination Address** — the device IP. Use **Discover**, or type a
    known address. Pixel devices show a zone count, e.g.
    `Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)`; picking one also
-   fills the mapping's **Pixels** field automatically. Tick **16-bit** on a
-   Pixel mapping for six channels per pixel.
+   fills the mapping's **Pixels** field automatically. A Pixel mapping's
+   **Color mode** picks the per-pixel layout: RGB, RGB+CT, RGBW, RGBW+CT,
+   each 8-bit or 16-bit (the same eight layouts as the color protocols).
 3. **Start Channel** — DMX start address of that device's channels.
 
 In the fixture editor, patch bulbs with the plugin's **LIFX / Color Bulb**
 profile; its personalities match the color protocols one-to-one (**RGB**,
 **RGB+CT**, **RGBW**, **RGBW+CT**, and the same four as **16-bit**).
-Pixel mappings take `zones × 3` channels (`zones × 6` in 16-bit) from
-discovery. The Mapped Device selector prefills from an existing LIFX
+Pixel mappings take `zones × channels-per-pixel` channels, where the
+Color mode sets the width (3 for RGB up to 10 for RGBW+CT 16-bit) and
+discovery sets the zone count. The Mapped Device selector prefills from an existing LIFX
 mapping. Presets, cues, effects, and Fixture Control then drive the device
 through the normal lighting pipeline.
 
@@ -47,8 +49,8 @@ white gives a pastel red.
 plugin feeds the full 16-bit value into LIFX's 16-bit HSBK, so long fades
 stay smooth at low levels instead of stepping through 256 values.
 
-Requires a Core whose plugin SDK contract is **1.8** or newer (16-bit
-plugin fixture profiles; the 8-bit features need 1.6).
+Requires a Core whose plugin SDK contract is **1.10** or newer (Pixel Color
+mode; the 16-bit features need 1.8, the 8-bit features 1.6).
 
 | Protocol | Channels | Notes |
 |---|---|---|
@@ -60,7 +62,7 @@ plugin fixture profiles; the 8-bit features need 1.6).
 | `LIFX_COLOR_CT_16` | RGB + CT, coarse + fine (8 ch) | |
 | `LIFX_COLOR_RGBW_16` | RGB + W, coarse + fine (8 ch) | |
 | `LIFX_COLOR_RGBW_CT_16` | RGB + W + CT, coarse + fine (10 ch) | |
-| `LIFX_PIXEL` | RGB × zones (× 6 with **16-bit** ticked) | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. The Pixels field (stamped by Discover) sets the channel count; discovery results also persist across restarts. |
+| `LIFX_PIXEL` | Color mode × zones (3–10 ch per pixel) | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. The Pixels field (stamped by Discover) and the Color mode field set the channel count; discovery results also persist across restarts. A mapping saved before the Color mode field existed keeps its old **16-bit** toggle (RGB 16-bit when on). |
 
 **SuperColour Tube pixel count:** the Tube's firmware reports a 5×11 tile
 (55 zones) but only 52 light — device indexes 0–1 are the two zones on
