@@ -143,11 +143,9 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
 
 internal sealed class LifxPixelSession : IPluginOutputSession
 {
-    private readonly IPEndPoint endpoint;
     private readonly LifxLight light;
     private readonly LifxColorMode mode;
     private readonly LifxSessionIo io;
-    private bool powered;
 
     public LifxPixelSession(
         IPEndPoint endpoint,
@@ -156,7 +154,6 @@ internal sealed class LifxPixelSession : IPluginOutputSession
         LifxDatagramSender? sender,
         ILogger? log = null)
     {
-        this.endpoint = endpoint;
         this.light = light;
         this.mode = mode;
         this.io = new LifxSessionIo(endpoint, sender, log);
@@ -187,20 +184,12 @@ internal sealed class LifxPixelSession : IPluginOutputSession
 
         try
         {
-            if (!this.powered)
-            {
-                await this.io.Send(
-                    this.endpoint,
-                    this.io.Packets.SetPower(this.light.Target, true),
-                    cancellationToken);
-                this.powered = true;
-            }
-
             IReadOnlyList<byte[]> packets = this.io.Packets.ZonePackets(this.light, colors, LifxConstants.StreamDurationMs);
-            foreach (byte[] packet in packets)
-            {
-                await this.io.Send(this.endpoint, packet, cancellationToken);
-            }
+            await this.io.SendFrameAsync(
+                this.light.Target,
+                packets,
+                this.light.EffectiveLayout == LifxLayout.Linear,
+                cancellationToken);
 
             this.io.Delivered(() =>
             {
@@ -208,7 +197,6 @@ internal sealed class LifxPixelSession : IPluginOutputSession
                 string first = colors.Length > 0 ? LifxPackets.DescribeHsbk(colors[0]) : "no zones";
                 return $"{MessageName(this.light)} x{packets.Count} packet(s), {lit} of {colors.Length} device zone(s) non-black, zone 1 {first}, {channelValues.Length} channel(s) received";
             });
-            this.io.ProbeIfDue(this.light.Target, this.light.EffectiveLayout == LifxLayout.Linear);
 
             return true;
         }

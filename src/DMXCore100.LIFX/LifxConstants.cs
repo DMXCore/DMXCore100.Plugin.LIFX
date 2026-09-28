@@ -32,6 +32,14 @@ internal static class LifxConstants
     public const int ProbeReplyTimeoutMs = 1500;
 
     /// <summary>
+    /// The host only sends when channel values change, so a device changed
+    /// behind our back (LIFX app, scene, schedule, CLI) would keep the
+    /// foreign state until the fixture moves again. Each session re-sends
+    /// its last frame (and power-on) after this long without an update.
+    /// </summary>
+    public const int ResendIntervalMs = 2000;
+
+    /// <summary>
     /// How often an output session logs a summary of what it streamed.
     /// </summary>
     public const int SendSummaryIntervalMs = 5000;

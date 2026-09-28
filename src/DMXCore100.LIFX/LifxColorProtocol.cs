@@ -66,11 +66,9 @@ internal sealed class LifxColorProtocol : IPluginOutputProtocol
 internal sealed class LifxColorSession : IPluginOutputSession
 {
     private readonly LifxColorMode mode;
-    private readonly IPEndPoint endpoint;
     private readonly byte[] target;
     private readonly LifxSessionIo io;
     private readonly bool multizone;
-    private bool powered;
 
     public LifxColorSession(
         LifxColorMode mode,
@@ -81,7 +79,6 @@ internal sealed class LifxColorSession : IPluginOutputSession
         bool multizone = false)
     {
         this.mode = mode;
-        this.endpoint = endpoint;
         this.target = target;
         this.multizone = multizone;
         this.io = new LifxSessionIo(endpoint, sender, log);
@@ -99,21 +96,12 @@ internal sealed class LifxColorSession : IPluginOutputSession
 
         try
         {
-            if (!this.powered)
-            {
-                await this.io.Send(
-                    this.endpoint,
-                    this.io.Packets.SetPower(this.target, true),
-                    cancellationToken);
-                this.powered = true;
-            }
-
-            await this.io.Send(
-                this.endpoint,
-                this.io.Packets.SetColor(this.target, color, LifxConstants.StreamDurationMs),
+            await this.io.SendFrameAsync(
+                this.target,
+                [this.io.Packets.SetColor(this.target, color, LifxConstants.StreamDurationMs)],
+                this.multizone,
                 cancellationToken);
             this.io.Delivered(() => $"SetColor {LifxPackets.DescribeHsbk(color)}");
-            this.io.ProbeIfDue(this.target, this.multizone);
             return true;
         }
         catch (SocketException)

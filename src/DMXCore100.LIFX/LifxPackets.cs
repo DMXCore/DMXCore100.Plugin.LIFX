@@ -20,6 +20,12 @@ internal sealed class LifxPackets
 
     public uint Source => this.source;
 
+    /// <summary>
+    /// Give an already-built packet the next sequence number before it is
+    /// sent again, so a resend is a new message rather than a duplicate.
+    /// </summary>
+    public void Restamp(byte[] packet) => packet[23] = this.nextSequence();
+
     public byte[] GetService() => Finalise(Header(LifxConstants.GetService, tagged: true));
 
     public byte[] GetLight(byte[] target) => Finalise(Header(LifxConstants.GetLight, target, resRequired: true));
