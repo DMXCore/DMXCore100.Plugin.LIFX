@@ -68,6 +68,14 @@ public class LifxPluginTests
         OutputProtocolDescriptor color = host.OutputProtocols[LifxPlugin.ColorProtocolId].Descriptor;
         Assert.AreEqual(LifxPlugin.PortType, color.PortType);
         Assert.AreEqual(LifxConstants.MaxUpdatesPerSecond, color.MaxUpdatesPerSecond);
+        foreach (var registered in host.OutputProtocols.Values)
+        {
+            Assert.AreEqual(
+                TimeSpan.FromMilliseconds(LifxConstants.RefreshIntervalMs),
+                registered.Descriptor.RefreshInterval,
+                $"{registered.Descriptor.Id} must ask the host for an idle refresh");
+        }
+
         Assert.IsTrue(color.SupportsDestinationDiscovery);
         Assert.AreEqual(LifxPlugin.ColorProfileCode, color.SuggestedProfileCode);
         Assert.AreEqual("LIFX Color (single zone)", color.DisplayName);

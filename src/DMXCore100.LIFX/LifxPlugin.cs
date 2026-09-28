@@ -24,6 +24,12 @@ public class LifxPlugin : IPlugin
 
     private static readonly TimeSpan PersistTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Small UDP datagrams to a local device, so every protocol asks the host
+    /// for a periodic re-send of unchanged values (SDK contract 1.13).
+    /// </summary>
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(LifxConstants.RefreshIntervalMs);
+
     private readonly List<IDisposable> registrations = [];
     private readonly LifxDiscoverFunc? discoverOverride;
     private readonly LifxDatagramSender? sendOverride;
@@ -156,6 +162,7 @@ public class LifxPlugin : IPlugin
             PortType = PortType,
             PortTypeDisplayName = "LIFX",
             MaxUpdatesPerSecond = LifxConstants.MaxUpdatesPerSecond,
+            RefreshInterval = RefreshInterval,
             SupportsDestinationDiscovery = true,
             MappingFields =
             [
@@ -213,6 +220,7 @@ public class LifxPlugin : IPlugin
             PortType = PortType,
             PortTypeDisplayName = "LIFX",
             MaxUpdatesPerSecond = LifxConstants.MaxUpdatesPerSecond,
+            RefreshInterval = RefreshInterval,
             SupportsDestinationDiscovery = true,
             SuggestedProfileCode = ColorProfileCode,
             SuggestedPersonality = personality,

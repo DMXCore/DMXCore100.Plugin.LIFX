@@ -33,7 +33,9 @@ mapping. Presets, cues, effects, and Fixture Control then drive the device
 through the normal lighting pipeline.
 
 The Core rate-limits each mapping to 20 updates/second and coalesces
-latest-wins. Color mappings convert RGB(W) to LIFX HSBK and send
+latest-wins. While a look holds still, the Core re-sends it (and power-on)
+every 2 seconds, so a light changed from the LIFX app, a scene, or another
+controller returns to the Core's state. Color mappings convert RGB(W) to LIFX HSBK and send
 `SetColor` with a 75 ms duration. Pixel mappings send `Set64` (Tube /
 Luna / tiles) or `SetExtendedColorZones` (Beam / strips).
 
@@ -49,8 +51,9 @@ white gives a pastel red.
 plugin feeds the full 16-bit value into LIFX's 16-bit HSBK, so long fades
 stay smooth at low levels instead of stepping through 256 values.
 
-Requires a Core whose plugin SDK contract is **1.10** or newer (Pixel Color
-mode; the 16-bit features need 1.8, the 8-bit features 1.6).
+Requires a Core whose plugin SDK contract is **1.13** or newer (the idle
+re-send; Pixel Color mode needs 1.10, the 16-bit features 1.8, the 8-bit
+features 1.6). Older Cores stay on plugin 1.2.3.
 
 | Protocol | Channels | Notes |
 |---|---|---|

@@ -13,40 +13,32 @@ internal sealed class LifxSessionIo : IAsyncDisposable
     private readonly ILogger? log;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly CancellationTokenSource lifetime = new();
-    private readonly SemaphoreSlim sendGate = new(1, 1);
-    private readonly TimeSpan? resendInterval;
+    private readonly TimeSpan powerInterval;
     private TimeSpan nextSummary = TimeSpan.Zero;
     private TimeSpan nextProbe = TimeSpan.Zero;
+    private TimeSpan? lastPower;
     private int updatesSinceSummary;
-    private int resendsSinceSummary;
     private Task probe = Task.CompletedTask;
-    private Task resendLoop = Task.CompletedTask;
-    private IReadOnlyList<byte[]>? lastFrame;
-    private byte[] lastTarget = new byte[8];
-    private bool lastMultizone;
-    private TimeSpan lastSent;
-    private bool powered;
 
-    /// <param name="resendInterval">
-    /// How long a frame may stand before it is re-sent; null uses
-    /// <see cref="LifxConstants.ResendIntervalMs"/> on a real socket and
-    /// disables resending for an injected (test) sender.
+    /// <param name="powerInterval">
+    /// How long a power-on stands before the next frame repeats it; defaults to
+    /// <see cref="LifxConstants.RefreshIntervalMs"/>.
     /// </param>
     public LifxSessionIo(
         IPEndPoint endpoint,
         LifxDatagramSender? sender,
         ILogger? log = null,
-        TimeSpan? resendInterval = null)
+        TimeSpan? powerInterval = null)
     {
         this.endpoint = endpoint;
         this.log = log;
+        this.powerInterval = powerInterval ?? TimeSpan.FromMilliseconds(LifxConstants.RefreshIntervalMs);
         uint source = (uint)Random.Shared.Next(2, int.MaxValue);
         int sequence = Random.Shared.Next(0, 256);
         Packets = new LifxPackets(source, () => (byte)Interlocked.Increment(ref sequence));
         if (sender != null)
         {
             Send = sender;
-            this.resendInterval = resendInterval;
         }
         else
         {
@@ -56,7 +48,6 @@ internal sealed class LifxSessionIo : IAsyncDisposable
             {
                 await socket.SendAsync(packet, ep, ct);
             };
-            this.resendInterval = resendInterval ?? TimeSpan.FromMilliseconds(LifxConstants.ResendIntervalMs);
         }
     }
 
@@ -67,9 +58,12 @@ internal sealed class LifxSessionIo : IAsyncDisposable
     private bool DebugEnabled => this.log?.IsEnabled(LogLevel.Debug) == true;
 
     /// <summary>
-    /// Send one frame (power-on first, once per session) and remember it for
-    /// <see cref="ResendLoopAsync"/>. The gate keeps a resend of the previous
-    /// frame from landing after a newer one.
+    /// Send one frame, preceded by a power-on on the session's first frame and
+    /// again whenever the last power-on is older than the power interval. The
+    /// host re-delivers unchanged values every
+    /// <see cref="LifxConstants.RefreshIntervalMs"/> (the protocols' declared
+    /// RefreshInterval), which restores a color changed behind our back; the
+    /// repeated power-on restores a device switched off the same way.
     /// </summary>
     public async Task SendFrameAsync(
         byte[] target,
@@ -77,35 +71,19 @@ internal sealed class LifxSessionIo : IAsyncDisposable
         bool multizone,
         CancellationToken cancellationToken)
     {
-        await this.sendGate.WaitAsync(cancellationToken);
-        try
+        TimeSpan now = this.clock.Elapsed;
+        if (this.lastPower is not { } lastPower || now - lastPower >= this.powerInterval)
         {
-            if (!this.powered)
-            {
-                await this.Send(this.endpoint, this.Packets.SetPower(target, true), cancellationToken);
-                this.powered = true;
-            }
-
-            foreach (byte[] packet in packets)
-            {
-                await this.Send(this.endpoint, packet, cancellationToken);
-            }
-
-            this.lastFrame = packets;
-            this.lastTarget = target;
-            this.lastMultizone = multizone;
-            this.lastSent = this.clock.Elapsed;
-            this.ProbeIfDue(target, multizone);
-        }
-        finally
-        {
-            this.sendGate.Release();
+            await this.Send(this.endpoint, this.Packets.SetPower(target, true), cancellationToken);
+            this.lastPower = now;
         }
 
-        if (this.resendInterval is { } interval && this.resendLoop.IsCompleted && !this.lifetime.IsCancellationRequested)
+        foreach (byte[] packet in packets)
         {
-            this.resendLoop = Task.Run(() => this.ResendLoopAsync(interval, this.lifetime.Token));
+            await this.Send(this.endpoint, packet, cancellationToken);
         }
+
+        this.ProbeIfDue(target, multizone);
     }
 
     /// <summary>
@@ -128,10 +106,9 @@ internal sealed class LifxSessionIo : IAsyncDisposable
 
         this.nextSummary = now + TimeSpan.FromMilliseconds(LifxConstants.SendSummaryIntervalMs);
         this.log!.LogDebug(
-            "LIFX {Ip}: {Updates} update(s) and {Resends} idle resend(s) since the last summary, latest {Latest}",
+            "LIFX {Ip}: {Updates} update(s) since the last summary, latest {Latest}",
             this.endpoint.Address,
             this.updatesSinceSummary,
-            Interlocked.Exchange(ref this.resendsSinceSummary, 0),
             describe());
         this.updatesSinceSummary = 0;
     }
@@ -166,64 +143,13 @@ internal sealed class LifxSessionIo : IAsyncDisposable
         this.udp?.Dispose();
         try
         {
-            await Task.WhenAll(this.probe, this.resendLoop);
+            await this.probe;
         }
         catch (Exception)
         {
         }
 
         this.lifetime.Dispose();
-    }
-
-    /// <summary>
-    /// Re-send the last frame, with power-on, whenever it has stood for
-    /// <paramref name="interval"/> without a newer one, so the device returns
-    /// to the Core's state after something else changed it.
-    /// </summary>
-    private async Task ResendLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
-    {
-        using var ticker = new PeriodicTimer(interval / 4);
-        try
-        {
-            while (await ticker.WaitForNextTickAsync(cancellationToken))
-            {
-                await this.sendGate.WaitAsync(cancellationToken);
-                try
-                {
-                    if (this.lastFrame == null || this.clock.Elapsed - this.lastSent < interval)
-                    {
-                        continue;
-                    }
-
-                    byte[] power = this.Packets.SetPower(this.lastTarget, true);
-                    await this.Send(this.endpoint, power, cancellationToken);
-                    foreach (byte[] packet in this.lastFrame)
-                    {
-                        this.Packets.Restamp(packet);
-                        await this.Send(this.endpoint, packet, cancellationToken);
-                    }
-
-                    this.lastSent = this.clock.Elapsed;
-                    Interlocked.Increment(ref this.resendsSinceSummary);
-                    this.ProbeIfDue(this.lastTarget, this.lastMultizone);
-                }
-                finally
-                {
-                    this.sendGate.Release();
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        catch (SocketException ex)
-        {
-            // The next real update re-opens the resend loop
-            this.log?.LogDebug("LIFX {Ip}: idle resend stopped: {Message}", this.endpoint.Address, ex.Message);
-        }
     }
 
     private async Task ProbeAsync(UdpClient socket, byte[] target, bool multizone, CancellationToken cancellationToken)

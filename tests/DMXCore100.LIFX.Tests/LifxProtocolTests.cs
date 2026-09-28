@@ -111,16 +111,12 @@ public class LifxProtocolTests
     }
 
     [TestMethod]
-    public async Task IdleFrame_IsResentWithPowerOnAndFreshSequence()
+    public async Task PowerOn_PrecedesTheFirstFrame_AndRepeatsOnlyAfterTheInterval()
     {
-        var sent = new List<byte[]>();
+        var sent = new List<ushort>();
         LifxDatagramSender sender = (_, packet, _) =>
         {
-            lock (sent)
-            {
-                sent.Add(packet.ToArray());
-            }
-
+            sent.Add(LifxPackets.ReadMessageType(packet.Span));
             return ValueTask.CompletedTask;
         };
 
@@ -128,60 +124,23 @@ public class LifxProtocolTests
         await using var io = new LifxSessionIo(
             new IPEndPoint(IPAddress.Loopback, LifxConstants.Port),
             sender,
-            resendInterval: TimeSpan.FromMilliseconds(40));
-        byte[] frame = io.Packets.SetColor(target, new Hsbk(100, 200, 300, 3500), 75);
-        byte firstSequence = frame[23];
-        await io.SendFrameAsync(target, [frame], multizone: false, CancellationToken.None);
+            powerInterval: TimeSpan.FromMilliseconds(80));
+        byte[] Frame() => io.Packets.SetColor(target, new Hsbk(100, 200, 300, 3500), 75);
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < deadline)
-        {
-            lock (sent)
+        await io.SendFrameAsync(target, [Frame()], multizone: false, CancellationToken.None);
+        await io.SendFrameAsync(target, [Frame()], multizone: false, CancellationToken.None);
+        await Task.Delay(150);
+        await io.SendFrameAsync(target, [Frame()], multizone: false, CancellationToken.None);
+
+        CollectionAssert.AreEqual(
+            new ushort[]
             {
-                if (sent.Count >= 4)
-                {
-                    break;
-                }
-            }
-
-            await Task.Delay(20);
-        }
-
-        byte[][] snapshot;
-        lock (sent)
-        {
-            snapshot = [.. sent];
-        }
-
-        // Power-on + frame, then at least one idle resend of power-on + frame
-        Assert.IsTrue(snapshot.Length >= 4, $"expected a resend, got {snapshot.Length} packet(s)");
-        Assert.AreEqual(LifxConstants.SetPower, LifxPackets.ReadMessageType(snapshot[0]));
-        Assert.AreEqual(LifxConstants.SetColor, LifxPackets.ReadMessageType(snapshot[1]));
-        Assert.AreEqual(LifxConstants.SetPower, LifxPackets.ReadMessageType(snapshot[2]));
-        Assert.AreEqual(LifxConstants.SetColor, LifxPackets.ReadMessageType(snapshot[3]));
-        Assert.AreEqual(firstSequence, snapshot[1][23]);
-        Assert.AreNotEqual(firstSequence, snapshot[3][23]);
-        CollectionAssert.AreEqual(snapshot[1][24..], snapshot[3][24..]);
+                LifxConstants.SetPower, LifxConstants.SetColor,
+                LifxConstants.SetColor,
+                LifxConstants.SetPower, LifxConstants.SetColor,
+            },
+            sent);
     }
-
-    [TestMethod]
-    public async Task InjectedSender_DoesNotResendByDefault()
-    {
-        int count = 0;
-        LifxDatagramSender sender = (_, _, _) =>
-        {
-            Interlocked.Increment(ref count);
-            return ValueTask.CompletedTask;
-        };
-
-        byte[] target = [1, 2, 3, 4, 5, 6, 0, 0];
-        await using var io = new LifxSessionIo(new IPEndPoint(IPAddress.Loopback, LifxConstants.Port), sender);
-        await io.SendFrameAsync(target, [io.Packets.SetColor(target, new Hsbk(0, 0, 0, 3500), 75)], false, CancellationToken.None);
-        await Task.Delay(100);
-
-        Assert.AreEqual(2, Volatile.Read(ref count));
-    }
-
     [TestMethod]
     public void DescribeTarget_FlagsUntargetedSessions()
     {
