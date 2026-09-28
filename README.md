@@ -36,8 +36,12 @@ The Core rate-limits each mapping to 20 updates/second and coalesces
 latest-wins. While a look holds still, the Core re-sends it (and power-on)
 every 2 seconds, so a light changed from the LIFX app, a scene, or another
 controller returns to the Core's state. Color mappings convert RGB(W) to LIFX HSBK and send
-`SetColor` with a 75 ms duration. Pixel mappings send `Set64` (Tube /
-Luna / tiles) or `SetExtendedColorZones` (Beam / strips).
+`SetColor`; Pixel mappings send `Set64` (Tube / Luna / tiles) or
+`SetExtendedColorZones` (Beam / strips). Small frame-to-frame changes (a
+fader move, a slow fade) use a 75 ms transition so the steps blend; a big
+jump (brightness by 15 % or more, hue by 30 degrees or more, saturation by
+25 % or more, or white temperature by 1000 K or more, in any zone) is sent
+with no transition, so flashes and snaps are instant.
 
 **RGBW:** LIFX bulbs have no separate white emitter, so the White channel
 is mixed additively into the color (it lifts red, green, and blue equally —

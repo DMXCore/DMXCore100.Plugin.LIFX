@@ -146,6 +146,7 @@ internal sealed class LifxPixelSession : IPluginOutputSession
     private readonly LifxLight light;
     private readonly LifxColorMode mode;
     private readonly LifxSessionIo io;
+    private Hsbk[]? lastColors;
 
     public LifxPixelSession(
         IPEndPoint endpoint,
@@ -182,20 +183,25 @@ internal sealed class LifxPixelSession : IPluginOutputSession
         // Dead zones (SuperColour Tube 2-4) stay black
         Hsbk[] colors = LifxPixelMap.ToDeviceZones(this.light, pixelColors);
 
+        // Snap the frame when any zone makes a big jump, blend small steps
+        // (see LifxTransition)
+        int durationMs = LifxTransition.DurationMs(this.lastColors, colors);
+
         try
         {
-            IReadOnlyList<byte[]> packets = this.io.Packets.ZonePackets(this.light, colors, LifxConstants.StreamDurationMs);
+            IReadOnlyList<byte[]> packets = this.io.Packets.ZonePackets(this.light, colors, durationMs);
             await this.io.SendFrameAsync(
                 this.light.Target,
                 packets,
                 this.light.EffectiveLayout == LifxLayout.Linear,
                 cancellationToken);
+            this.lastColors = colors;
 
             this.io.Delivered(() =>
             {
                 int lit = colors.Count(static color => color.Brightness > 0);
                 string first = colors.Length > 0 ? LifxPackets.DescribeHsbk(colors[0]) : "no zones";
-                return $"{MessageName(this.light)} x{packets.Count} packet(s), {lit} of {colors.Length} device zone(s) non-black, zone 1 {first}, {channelValues.Length} channel(s) received";
+                return $"{MessageName(this.light)} x{packets.Count} packet(s), fade {durationMs} ms, {lit} of {colors.Length} device zone(s) non-black, zone 1 {first}, {channelValues.Length} channel(s) received";
             });
 
             return true;

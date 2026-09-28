@@ -69,6 +69,7 @@ internal sealed class LifxColorSession : IPluginOutputSession
     private readonly byte[] target;
     private readonly LifxSessionIo io;
     private readonly bool multizone;
+    private Hsbk? lastColor;
 
     public LifxColorSession(
         LifxColorMode mode,
@@ -94,14 +95,18 @@ internal sealed class LifxColorSession : IPluginOutputSession
 
         Hsbk color = this.mode.ToHsbk(ch);
 
+        // Snap big jumps, blend small steps (see LifxTransition)
+        int durationMs = LifxTransition.DurationMs(this.lastColor, color);
+
         try
         {
             await this.io.SendFrameAsync(
                 this.target,
-                [this.io.Packets.SetColor(this.target, color, LifxConstants.StreamDurationMs)],
+                [this.io.Packets.SetColor(this.target, color, durationMs)],
                 this.multizone,
                 cancellationToken);
-            this.io.Delivered(() => $"SetColor {LifxPackets.DescribeHsbk(color)}");
+            this.lastColor = color;
+            this.io.Delivered(() => $"SetColor {LifxPackets.DescribeHsbk(color)}, fade {durationMs} ms");
             return true;
         }
         catch (SocketException)

@@ -12,7 +12,8 @@ internal static class LifxConstants
     public const int KelvinMax = 9000;
     /// <summary>
     /// SetColor duration at <see cref="MaxUpdatesPerSecond"/>: ~1.5× the send
-    /// interval so consecutive updates fade into each other over UDP.
+    /// interval so consecutive updates fade into each other over UDP. Big
+    /// jumps go out with no transition instead (see <see cref="LifxTransition"/>).
     /// </summary>
     public const int StreamDurationMs = 75;
     public const int MaxUpdatesPerSecond = 20;
