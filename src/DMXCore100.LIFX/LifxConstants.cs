@@ -24,6 +24,18 @@ internal static class LifxConstants
     /// </summary>
     public const int DiscoveryQueryAttempts = 3;
 
+    /// <summary>
+    /// How often an output session asks its device for an acknowledgement and
+    /// its light state (Debug logging only), and how long it waits for them.
+    /// </summary>
+    public const int ProbeIntervalMs = 30_000;
+    public const int ProbeReplyTimeoutMs = 1500;
+
+    /// <summary>
+    /// How often an output session logs a summary of what it streamed.
+    /// </summary>
+    public const int SendSummaryIntervalMs = 5000;
+
     public const ushort GetService = 2;
     public const ushort StateService = 3;
     public const ushort SetPower = 21;
@@ -31,7 +43,13 @@ internal static class LifxConstants
     public const ushort StateLabel = 25;
     public const ushort GetVersion = 32;
     public const ushort StateVersion = 33;
+    public const ushort Acknowledgement = 45;
+    public const ushort GetLight = 101;
     public const ushort SetColor = 102;
+    public const ushort LightState = 107;
+    public const ushort StateUnhandled = 223;
+    public const ushort GetMultiZoneEffect = 507;
+    public const ushort StateMultiZoneEffect = 509;
     public const ushort SetExtendedColorZones = 510;
     public const ushort GetExtendedColorZones = 511;
     public const ushort StateExtendedColorZones = 512;

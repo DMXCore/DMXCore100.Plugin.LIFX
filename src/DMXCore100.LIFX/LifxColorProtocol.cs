@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using DMXCore.PluginSdk;
+using Microsoft.Extensions.Logging;
 
 namespace DMXCore100.LIFX;
 
@@ -14,12 +15,18 @@ internal sealed class LifxColorProtocol : IPluginOutputProtocol
     private readonly LifxColorMode mode;
     private readonly LifxDiscovery discovery;
     private readonly LifxDatagramSender? sender;
+    private readonly ILogger? log;
 
-    public LifxColorProtocol(LifxColorMode mode, LifxDiscovery discovery, LifxDatagramSender? sender = null)
+    public LifxColorProtocol(
+        LifxColorMode mode,
+        LifxDiscovery discovery,
+        LifxDatagramSender? sender = null,
+        ILogger? log = null)
     {
         this.mode = mode;
         this.discovery = discovery;
         this.sender = sender;
+        this.log = log;
     }
 
     public int GetChannelCount(PluginOutputMappingConfig config) => this.mode.ChannelCount;
@@ -29,9 +36,18 @@ internal sealed class LifxColorProtocol : IPluginOutputProtocol
         CancellationToken cancellationToken)
     {
         IPEndPoint endpoint = LifxMapping.RequireEndpoint(config);
-        byte[] target = this.discovery.TargetFor(endpoint.Address.ToString());
+        LifxLight? light = this.discovery.LightFor(endpoint.Address.ToString());
+        byte[] target = light?.Target ?? new byte[8];
+        this.log?.LogDebug(
+            "LIFX {Ip}: opened {Protocol} session, target {Target}, device {Device}, {Channels} channel(s) per update via SetColor",
+            endpoint.Address,
+            this.mode.ProtocolId,
+            LifxMapping.DescribeTarget(target),
+            light == null ? "not in the discovery cache" : $"'{light.Label}' {light.ModelName}",
+            this.mode.ChannelCount);
+
         return Task.FromResult<IPluginOutputSession>(
-            new LifxColorSession(this.mode, endpoint, target, this.sender));
+            new LifxColorSession(this.mode, endpoint, target, this.sender, this.log, light?.ZoneCapable == true));
     }
 
     public async Task<IReadOnlyList<PluginOutputDestinationOption>?> GetDestinationOptionsAsync(
@@ -53,18 +69,22 @@ internal sealed class LifxColorSession : IPluginOutputSession
     private readonly IPEndPoint endpoint;
     private readonly byte[] target;
     private readonly LifxSessionIo io;
+    private readonly bool multizone;
     private bool powered;
 
     public LifxColorSession(
         LifxColorMode mode,
         IPEndPoint endpoint,
         byte[] target,
-        LifxDatagramSender? sender)
+        LifxDatagramSender? sender,
+        ILogger? log = null,
+        bool multizone = false)
     {
         this.mode = mode;
         this.endpoint = endpoint;
         this.target = target;
-        this.io = new LifxSessionIo(endpoint, sender);
+        this.multizone = multizone;
+        this.io = new LifxSessionIo(endpoint, sender, log);
     }
 
     public async Task<bool> SendAsync(ReadOnlyMemory<byte> channelValues, CancellationToken cancellationToken)
@@ -92,6 +112,8 @@ internal sealed class LifxColorSession : IPluginOutputSession
                 this.endpoint,
                 this.io.Packets.SetColor(this.target, color, LifxConstants.StreamDurationMs),
                 cancellationToken);
+            this.io.Delivered(() => $"SetColor {LifxPackets.DescribeHsbk(color)}");
+            this.io.ProbeIfDue(this.target, this.multizone);
             return true;
         }
         catch (SocketException)

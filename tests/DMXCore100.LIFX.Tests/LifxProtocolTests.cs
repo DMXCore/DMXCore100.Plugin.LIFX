@@ -57,6 +57,67 @@ public class LifxProtocolTests
     }
 
     [TestMethod]
+    public void StreamedMessages_AskForNoReply_ProbeMessagesDo()
+    {
+        byte[] target = [1, 2, 3, 4, 5, 6, 0, 0];
+        LifxPackets packets = Packets();
+
+        Assert.AreEqual(0, packets.SetColor(target, new Hsbk(0, 0, 0, 3500), 75)[22]);
+        Assert.AreEqual(0, packets.SetPower(target, true)[22]);
+        Assert.AreEqual(2, packets.SetPower(target, true, ackRequired: true)[22]);
+        Assert.AreEqual(1, packets.GetLight(target)[22]);
+        Assert.AreEqual(1, packets.GetMultiZoneEffect(target)[22]);
+        Assert.AreEqual(LifxConstants.GetMultiZoneEffect, LifxPackets.ReadMessageType(packets.GetMultiZoneEffect(target)));
+    }
+
+    [TestMethod]
+    public void DescribeReply_ReadsLightStateAndEffect()
+    {
+        byte[] state = new byte[LifxConstants.HeaderSize + 52];
+        int o = LifxConstants.HeaderSize;
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o, 2), 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o + 2, 2), 65535);
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o + 4, 2), 65535);
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o + 6, 2), 3500);
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o + 10, 2), 65535);
+        "Beam3"u8.CopyTo(state.AsSpan(o + 12));
+
+        string light = LifxPackets.DescribeReply(LifxConstants.LightState, state);
+        StringAssert.Contains(light, "'Beam3'");
+        StringAssert.Contains(light, "power ON");
+        StringAssert.Contains(light, "saturation 100%");
+        StringAssert.Contains(light, "3500 K");
+
+        byte[] effect = new byte[LifxConstants.HeaderSize + 59];
+        effect[LifxConstants.HeaderSize + 4] = 1;
+        StringAssert.Contains(LifxPackets.DescribeReply(LifxConstants.StateMultiZoneEffect, effect), "MOVE");
+
+        StringAssert.Contains(LifxPackets.DescribeReply(LifxConstants.Acknowledgement, new byte[LifxConstants.HeaderSize]), "acknowledged");
+    }
+
+    [TestMethod]
+    public void DescribeReply_CountsLitExtendedZones()
+    {
+        byte[] state = new byte[LifxConstants.HeaderSize + 5 + (82 * 8)];
+        int o = LifxConstants.HeaderSize;
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o, 2), 31);
+        state[o + 4] = 31;
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o + 5 + 4, 2), 65535);
+        BinaryPrimitives.WriteUInt16LittleEndian(state.AsSpan(o + 5 + 8 + 4, 2), 1000);
+
+        string zones = LifxPackets.DescribeReply(LifxConstants.StateExtendedColorZones, state);
+        StringAssert.Contains(zones, "zones 0-30 of 31");
+        StringAssert.Contains(zones, "2 non-black");
+    }
+
+    [TestMethod]
+    public void DescribeTarget_FlagsUntargetedSessions()
+    {
+        Assert.AreEqual("d073d5000001", LifxMapping.DescribeTarget([0xd0, 0x73, 0xd5, 0, 0, 1, 0, 0]));
+        StringAssert.Contains(LifxMapping.DescribeTarget(new byte[8]), "untargeted");
+    }
+
+    [TestMethod]
     public void SuperColourAndStrips_HavePixelLayouts_A19DoesNot()
     {
         Assert.AreEqual(LifxLayout.Matrix, LifxProducts.Layout(218));

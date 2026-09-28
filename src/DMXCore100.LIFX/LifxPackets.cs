@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text;
 
 namespace DMXCore100.LIFX;
 
@@ -17,7 +18,14 @@ internal sealed class LifxPackets
         this.nextSequence = nextSequence;
     }
 
+    public uint Source => this.source;
+
     public byte[] GetService() => Finalise(Header(LifxConstants.GetService, tagged: true));
+
+    public byte[] GetLight(byte[] target) => Finalise(Header(LifxConstants.GetLight, target, resRequired: true));
+
+    public byte[] GetMultiZoneEffect(byte[] target) =>
+        Finalise(Header(LifxConstants.GetMultiZoneEffect, target, resRequired: true));
 
     public byte[] GetLabel(byte[] target) => Finalise(Header(LifxConstants.GetLabel, target));
 
@@ -25,11 +33,12 @@ internal sealed class LifxPackets
 
     public byte[] GetDeviceChain(byte[] target) => Finalise(Header(LifxConstants.GetDeviceChain, target));
 
-    public byte[] GetExtendedColorZones(byte[] target) => Finalise(Header(LifxConstants.GetExtendedColorZones, target));
+    public byte[] GetExtendedColorZones(byte[] target) =>
+        Finalise(Header(LifxConstants.GetExtendedColorZones, target, resRequired: true));
 
-    public byte[] SetPower(byte[] target, bool on)
+    public byte[] SetPower(byte[] target, bool on, bool ackRequired = false)
     {
-        byte[] header = Header(LifxConstants.SetPower, target);
+        byte[] header = Header(LifxConstants.SetPower, target, ackRequired: ackRequired);
         byte[] packet = new byte[header.Length + 2];
         header.CopyTo(packet, 0);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(header.Length, 2), (ushort)(on ? 65535 : 0));
@@ -288,7 +297,70 @@ internal sealed class LifxPackets
         }
     }
 
-    private byte[] Header(ushort msgType, byte[]? target = null, bool tagged = false)
+    /// <summary>
+    /// One line describing a device reply, for the session probe log.
+    /// </summary>
+    public static string DescribeReply(ushort msgType, ReadOnlySpan<byte> data)
+    {
+        ReadOnlySpan<byte> payload = data.Length > LifxConstants.HeaderSize ? data[LifxConstants.HeaderSize..] : [];
+        switch (msgType)
+        {
+            case LifxConstants.Acknowledgement:
+                return "acknowledged SetPower (Set messages from this socket reach the device)";
+            case LifxConstants.LightState when payload.Length >= 44:
+                ushort hue = BinaryPrimitives.ReadUInt16LittleEndian(payload);
+                ushort saturation = BinaryPrimitives.ReadUInt16LittleEndian(payload[2..]);
+                ushort brightness = BinaryPrimitives.ReadUInt16LittleEndian(payload[4..]);
+                ushort kelvin = BinaryPrimitives.ReadUInt16LittleEndian(payload[6..]);
+                ushort power = BinaryPrimitives.ReadUInt16LittleEndian(payload[10..]);
+                string label = Encoding.UTF8.GetString(payload.Slice(12, 32)).TrimEnd('\0');
+                return $"LightState '{label}': power {(power > 0 ? "ON" : "OFF")}, {DescribeHsbk(hue, saturation, brightness, kelvin)}";
+            case LifxConstants.StateMultiZoneEffect when payload.Length >= 5:
+                byte effect = payload[4];
+                string effectName = effect switch
+                {
+                    0 => "OFF",
+                    1 => "MOVE",
+                    _ => $"type {effect}",
+                };
+                return $"firmware multizone effect {effectName}";
+            case LifxConstants.StateExtendedColorZones when payload.Length >= 5:
+                int zonesCount = BinaryPrimitives.ReadUInt16LittleEndian(payload);
+                int index = BinaryPrimitives.ReadUInt16LittleEndian(payload[2..]);
+                int colorsCount = Math.Min(payload[4], (payload.Length - 5) / 8);
+                var zones = new List<Hsbk>(colorsCount);
+                for (int i = 0; i < colorsCount; i++)
+                {
+                    ReadOnlySpan<byte> c = payload.Slice(5 + (i * 8), 8);
+                    zones.Add(new Hsbk(
+                        BinaryPrimitives.ReadUInt16LittleEndian(c),
+                        BinaryPrimitives.ReadUInt16LittleEndian(c[2..]),
+                        BinaryPrimitives.ReadUInt16LittleEndian(c[4..]),
+                        BinaryPrimitives.ReadUInt16LittleEndian(c[6..])));
+                }
+
+                int lit = zones.Count(static zone => zone.Brightness > 0);
+                string sample = string.Join(" | ", zones.Take(3).Select(static zone => DescribeHsbk(zone)));
+                return $"zones {index}-{index + colorsCount - 1} of {zonesCount}: {lit} non-black; first zones {sample}";
+            case LifxConstants.StateUnhandled when payload.Length >= 2:
+                return $"does not handle message type {BinaryPrimitives.ReadUInt16LittleEndian(payload)}";
+            default:
+                return $"replied with message type {msgType} ({data.Length} bytes)";
+        }
+    }
+
+    public static string DescribeHsbk(Hsbk color) =>
+        DescribeHsbk(color.Hue, color.Saturation, color.Brightness, color.Kelvin);
+
+    private static string DescribeHsbk(ushort hue, ushort saturation, ushort brightness, ushort kelvin) =>
+        $"hue {hue * 360.0 / 65536:0}°, saturation {saturation * 100.0 / 65535:0}%, brightness {brightness * 100.0 / 65535:0.#}%, {kelvin} K";
+
+    private byte[] Header(
+        ushort msgType,
+        byte[]? target = null,
+        bool tagged = false,
+        bool ackRequired = false,
+        bool resRequired = false)
     {
         // A zero target must be tagged or devices may drop the frame (the
         // LAN spec reserves untagged frames for a real 8-byte target)
@@ -315,6 +387,7 @@ internal sealed class LifxPackets
             target.CopyTo(packet, 8);
         }
 
+        packet[22] = (byte)((resRequired ? 1 : 0) | (ackRequired ? 2 : 0));
         packet[23] = this.nextSequence();
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(32, 2), msgType);
         return packet;

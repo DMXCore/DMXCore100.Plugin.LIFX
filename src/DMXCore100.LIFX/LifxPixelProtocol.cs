@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using DMXCore.PluginSdk;
+using Microsoft.Extensions.Logging;
 
 namespace DMXCore100.LIFX;
 
@@ -23,11 +24,13 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
 
     private readonly LifxDiscovery discovery;
     private readonly LifxDatagramSender? sender;
+    private readonly ILogger? log;
 
-    public LifxPixelProtocol(LifxDiscovery discovery, LifxDatagramSender? sender = null)
+    public LifxPixelProtocol(LifxDiscovery discovery, LifxDatagramSender? sender = null, ILogger? log = null)
     {
         this.discovery = discovery;
         this.sender = sender;
+        this.log = log;
     }
 
     /// <summary>
@@ -97,7 +100,23 @@ internal sealed class LifxPixelProtocol : IPluginOutputProtocol
                 $"No pixel LIFX device is cached at '{ip}'. Run Discover on the LIFX Pixel protocol first.");
         }
 
-        return new LifxPixelSession(endpoint, light, ColorModeOf(config), this.sender);
+        LifxColorMode mode = ColorModeOf(config);
+        this.log?.LogDebug(
+            "LIFX {Ip}: opened {Protocol} session, target {Target}, device '{Label}' {Model} (product {Product}), {Layout} layout, {Zones} device zone(s) / {Pixels} pixel(s), color mode {Mode}, {Channels} channel(s) per update via {Message}",
+            endpoint.Address,
+            LifxPlugin.PixelProtocolId,
+            LifxMapping.DescribeTarget(light.Target),
+            light.Label,
+            light.ModelName,
+            light.Product,
+            light.EffectiveLayout,
+            light.ZoneCount,
+            LifxPixelMap.PixelCount(light),
+            mode.Personality,
+            this.GetChannelCount(config),
+            LifxPixelSession.MessageName(light));
+
+        return new LifxPixelSession(endpoint, light, mode, this.sender, this.log);
     }
 
     public async Task<IReadOnlyList<PluginOutputDestinationOption>?> GetDestinationOptionsAsync(
@@ -130,13 +149,25 @@ internal sealed class LifxPixelSession : IPluginOutputSession
     private readonly LifxSessionIo io;
     private bool powered;
 
-    public LifxPixelSession(IPEndPoint endpoint, LifxLight light, LifxColorMode mode, LifxDatagramSender? sender)
+    public LifxPixelSession(
+        IPEndPoint endpoint,
+        LifxLight light,
+        LifxColorMode mode,
+        LifxDatagramSender? sender,
+        ILogger? log = null)
     {
         this.endpoint = endpoint;
         this.light = light;
         this.mode = mode;
-        this.io = new LifxSessionIo(endpoint, sender);
+        this.io = new LifxSessionIo(endpoint, sender, log);
     }
+
+    public static string MessageName(LifxLight light) => light.EffectiveLayout switch
+    {
+        LifxLayout.Matrix => "Set64",
+        LifxLayout.Linear => "SetExtendedColorZones",
+        _ => "none",
+    };
 
     public async Task<bool> SendAsync(ReadOnlyMemory<byte> channelValues, CancellationToken cancellationToken)
     {
@@ -165,10 +196,19 @@ internal sealed class LifxPixelSession : IPluginOutputSession
                 this.powered = true;
             }
 
-            foreach (byte[] packet in this.io.Packets.ZonePackets(this.light, colors, LifxConstants.StreamDurationMs))
+            IReadOnlyList<byte[]> packets = this.io.Packets.ZonePackets(this.light, colors, LifxConstants.StreamDurationMs);
+            foreach (byte[] packet in packets)
             {
                 await this.io.Send(this.endpoint, packet, cancellationToken);
             }
+
+            this.io.Delivered(() =>
+            {
+                int lit = colors.Count(static color => color.Brightness > 0);
+                string first = colors.Length > 0 ? LifxPackets.DescribeHsbk(colors[0]) : "no zones";
+                return $"{MessageName(this.light)} x{packets.Count} packet(s), {lit} of {colors.Length} device zone(s) non-black, zone 1 {first}, {channelValues.Length} channel(s) received";
+            });
+            this.io.ProbeIfDue(this.light.Target, this.light.EffectiveLayout == LifxLayout.Linear);
 
             return true;
         }

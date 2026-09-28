@@ -98,12 +98,12 @@ public class LifxPlugin : IPlugin
         {
             this.registrations.Add(host.Outputs.RegisterOutputProtocol(
                 Descriptor(mode.ProtocolId, ColorDisplayName(mode), mode.Personality),
-                new LifxColorProtocol(mode, discovery, this.sendOverride)));
+                new LifxColorProtocol(mode, discovery, this.sendOverride, host.Logger)));
         }
 
         this.registrations.Add(host.Outputs.RegisterOutputProtocol(
             PixelDescriptor(),
-            new LifxPixelProtocol(discovery, this.sendOverride)));
+            new LifxPixelProtocol(discovery, this.sendOverride, host.Logger)));
 
         host.SetConnectionState(true, "LIFX output ready");
     }
