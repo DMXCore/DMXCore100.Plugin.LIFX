@@ -94,7 +94,10 @@ so the fixture footprint matches.
   run Discover on the Pixel protocol and pick the device (which fills it).
   Give the fixture a static DHCP lease.
 - **Bulb does not follow cues:** check the mapping's IP, that the fixture
-  is patched to the LIFX profile, and that the output is enabled.
+  is patched to the LIFX profile, and that the output is enabled. At the
+  default Debug log level, a device that stops answering the plugin's
+  30-second check is logged; set the plugin's **Log Level** to Verbose to
+  also see a summary of what is streamed and the device's reported state.
 - **Wrong bulb:** destination is the IP address. Re-run Discover after a
   DHCP change, or set a static lease.
 - **Plugin will not load:** the device firmware must expose SDK 1.8+

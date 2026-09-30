@@ -57,6 +57,8 @@ internal sealed class LifxSessionIo : IAsyncDisposable
 
     private bool DebugEnabled => this.log?.IsEnabled(LogLevel.Debug) == true;
 
+    private bool TraceEnabled => this.log?.IsEnabled(LogLevel.Trace) == true;
+
     /// <summary>
     /// Send one frame, preceded by a power-on on the session's first frame and
     /// again whenever the last power-on is older than the power interval. The
@@ -88,11 +90,12 @@ internal sealed class LifxSessionIo : IAsyncDisposable
 
     /// <summary>
     /// Count one delivered update and, every few seconds, log what is being
-    /// streamed. <paramref name="describe"/> only runs when a summary is due.
+    /// streamed (Verbose only: it repeats for as long as a session streams).
+    /// <paramref name="describe"/> only runs when a summary is due.
     /// </summary>
     public void Delivered(Func<string> describe)
     {
-        if (!this.DebugEnabled)
+        if (!this.TraceEnabled)
         {
             return;
         }
@@ -105,7 +108,7 @@ internal sealed class LifxSessionIo : IAsyncDisposable
         }
 
         this.nextSummary = now + TimeSpan.FromMilliseconds(LifxConstants.SendSummaryIntervalMs);
-        this.log!.LogDebug(
+        this.log!.LogTrace(
             "LIFX {Ip}: {Updates} update(s) since the last summary, latest {Latest}",
             this.endpoint.Address,
             this.updatesSinceSummary,
@@ -119,6 +122,8 @@ internal sealed class LifxSessionIo : IAsyncDisposable
     /// session's own socket, to acknowledge a SetPower and report its light
     /// (and multizone effect) state. The replies, or their absence, show
     /// whether the stream reaches the device and what it is actually showing.
+    /// The replies log at Verbose; missing replies log at Debug, since they
+    /// mean the device is unreachable.
     /// </summary>
     private void ProbeIfDue(byte[] target, bool multizone)
     {
@@ -187,7 +192,7 @@ internal sealed class LifxSessionIo : IAsyncDisposable
                 }
 
                 replies++;
-                this.log!.LogDebug(
+                this.log!.LogTrace(
                     "LIFX {Ip} probe reply from {Remote}: {Reply}",
                     this.endpoint.Address,
                     result.RemoteEndPoint,
