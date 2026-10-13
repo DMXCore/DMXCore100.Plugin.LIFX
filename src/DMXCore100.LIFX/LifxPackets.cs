@@ -20,21 +20,21 @@ internal sealed class LifxPackets
 
     public uint Source => this.source;
 
-    public byte[] GetService() => Finalise(Header(LifxConstants.GetService, tagged: true));
+    public byte[] GetService() => WithSize(Header(LifxConstants.GetService, tagged: true));
 
-    public byte[] GetLight(byte[] target) => Finalise(Header(LifxConstants.GetLight, target, resRequired: true));
+    public byte[] GetLight(byte[] target) => WithSize(Header(LifxConstants.GetLight, target, resRequired: true));
 
     public byte[] GetMultiZoneEffect(byte[] target) =>
-        Finalise(Header(LifxConstants.GetMultiZoneEffect, target, resRequired: true));
+        WithSize(Header(LifxConstants.GetMultiZoneEffect, target, resRequired: true));
 
-    public byte[] GetLabel(byte[] target) => Finalise(Header(LifxConstants.GetLabel, target));
+    public byte[] GetLabel(byte[] target) => WithSize(Header(LifxConstants.GetLabel, target));
 
-    public byte[] GetVersion(byte[] target) => Finalise(Header(LifxConstants.GetVersion, target));
+    public byte[] GetVersion(byte[] target) => WithSize(Header(LifxConstants.GetVersion, target));
 
-    public byte[] GetDeviceChain(byte[] target) => Finalise(Header(LifxConstants.GetDeviceChain, target));
+    public byte[] GetDeviceChain(byte[] target) => WithSize(Header(LifxConstants.GetDeviceChain, target));
 
     public byte[] GetExtendedColorZones(byte[] target) =>
-        Finalise(Header(LifxConstants.GetExtendedColorZones, target, resRequired: true));
+        WithSize(Header(LifxConstants.GetExtendedColorZones, target, resRequired: true));
 
     public byte[] SetPower(byte[] target, bool on, bool ackRequired = false)
     {
@@ -42,7 +42,7 @@ internal sealed class LifxPackets
         byte[] packet = new byte[header.Length + 2];
         header.CopyTo(packet, 0);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(header.Length, 2), (ushort)(on ? 65535 : 0));
-        return Finalise(packet);
+        return WithSize(packet);
     }
 
     public byte[] SetColor(byte[] target, Hsbk color, int durationMs)
@@ -57,7 +57,7 @@ internal sealed class LifxPackets
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 5, 2), color.Brightness);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 7, 2), color.Kelvin);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(o + 9, 4), (uint)durationMs);
-        return Finalise(packet);
+        return WithSize(packet);
     }
 
     public IReadOnlyList<byte[]> ZonePackets(LifxLight light, IReadOnlyList<Hsbk> colors, int durationMs) =>
@@ -122,7 +122,7 @@ internal sealed class LifxPackets
                 packet[o + 5] = (byte)cols;
                 BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(o + 6, 4), (uint)durationMs);
                 PackHsbk(packet.AsSpan(o + 10), chunk, LifxConstants.Set64ColorsPerPacket);
-                packets.Add(Finalise(packet));
+                packets.Add(WithSize(packet));
             }
         }
 
@@ -148,7 +148,7 @@ internal sealed class LifxPackets
             BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(o + 5, 2), (ushort)index);
             packet[o + 7] = (byte)chunk.Length;
             PackHsbk(packet.AsSpan(o + 8), chunk, LifxConstants.ExtendedMzColorsPerPacket);
-            packets.Add(Finalise(packet));
+            packets.Add(WithSize(packet));
         }
 
         return packets;
@@ -393,7 +393,7 @@ internal sealed class LifxPackets
         return packet;
     }
 
-    private static byte[] Finalise(byte[] packet)
+    private static byte[] WithSize(byte[] packet)
     {
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(0, 2), (ushort)packet.Length);
         return packet;
