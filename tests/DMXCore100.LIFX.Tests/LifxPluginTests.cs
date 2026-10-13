@@ -520,7 +520,7 @@ public class LifxPluginTests
                 ModelName = "LIFX A19",
                 Product = 72,
             },
-            SuperColourTube(),
+            SuperColorTube(),
         ];
         var (_, host, _) = await CreateInitializedAsync(lights);
 
@@ -536,13 +536,13 @@ public class LifxPluginTests
         Assert.IsNotNull(pixel);
         Assert.AreEqual(1, pixel.Count);
         Assert.AreEqual("192.168.1.30", pixel[0].Value);
-        Assert.AreEqual("Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)", pixel[0].Label);
+        Assert.AreEqual("Bar (192.168.1.30, LIFX SuperColor Tube, 52 px)", pixel[0].Label);
     }
 
     [TestMethod]
     public async Task PixelGetChannelCount_IsThreeTimesDiscoveredZones()
     {
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
         IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
         _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
@@ -553,7 +553,7 @@ public class LifxPluginTests
     [TestMethod]
     public async Task PixelGetChannelCount_HonorsStoredPixelsOptionWithoutDiscovery()
     {
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
         IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
 
         // No discovery has run: the stored mapping option alone must supply
@@ -570,7 +570,7 @@ public class LifxPluginTests
     [TestMethod]
     public async Task PixelGetChannelCount_FollowsColorMode()
     {
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
         IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
         _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
@@ -633,7 +633,7 @@ public class LifxPluginTests
     [TestMethod]
     public async Task PixelGetChannelCount_LegacySixteenBitToggleStillDoublesTheFootprint()
     {
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
         IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
         _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
@@ -729,7 +729,7 @@ public class LifxPluginTests
             await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
         Assert.IsNotNull(options);
-        Assert.AreEqual("Tube (192.168.1.31, LIFX SuperColour Tube, 52 px)", options[0].Label);
+        Assert.AreEqual("Tube (192.168.1.31, LIFX SuperColor Tube, 52 px)", options[0].Label);
         Assert.AreEqual("52", options[0].Options?[LifxPixelProtocol.PixelsOptionKey]);
         Assert.AreEqual(156, protocol.GetChannelCount(Mapping("192.168.1.31")));
     }
@@ -789,7 +789,7 @@ public class LifxPluginTests
     [TestMethod]
     public async Task PixelDiscover_StampsPixelsOptionOnDestinations()
     {
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
 
         IReadOnlyList<PluginOutputDestinationOption>? options =
             await Protocol(host, LifxPlugin.PixelProtocolId)
@@ -802,7 +802,7 @@ public class LifxPluginTests
     [TestMethod]
     public async Task Discovery_PersistsToStateJsonAndSeedsNextInstance()
     {
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
         _ = await Protocol(host, LifxPlugin.PixelProtocolId)
             .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
@@ -834,7 +834,7 @@ public class LifxPluginTests
     [TestMethod]
     public void Merge_KeepsDevicesTheScanMissed()
     {
-        LifxLight[] previous = [SuperColourTube(), Kitchen()];
+        LifxLight[] previous = [SuperColorTube(), Kitchen()];
         LifxLight[] scanned = [Kitchen()];
 
         IReadOnlyList<LifxLight> merged = LifxDiscovery.Merge(previous, scanned);
@@ -850,13 +850,13 @@ public class LifxPluginTests
         // The Tube answered GetService but dropped StateVersion and the
         // chain reply: a bare entry with only target + IP
         LifxLight bare = new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.30");
-        IReadOnlyList<LifxLight> merged = LifxDiscovery.Merge([SuperColourTube()], [bare]);
+        IReadOnlyList<LifxLight> merged = LifxDiscovery.Merge([SuperColorTube()], [bare]);
 
         Assert.AreEqual(1, merged.Count);
         LifxLight tube = merged[0];
         Assert.AreEqual("Bar", tube.Label);
         Assert.AreEqual(218u, tube.Product);
-        Assert.AreEqual("LIFX SuperColour Tube", tube.ModelName);
+        Assert.AreEqual("LIFX SuperColor Tube", tube.ModelName);
         Assert.AreEqual(LifxLayout.Matrix, tube.Layout);
         Assert.AreEqual(52, tube.ZoneCount);
         Assert.AreEqual(4, tube.MatrixWidth);
@@ -867,13 +867,13 @@ public class LifxPluginTests
     [TestMethod]
     public void Merge_ScannedValuesBeatBackfill()
     {
-        LifxLight fresh = SuperColourTube();
+        LifxLight fresh = SuperColorTube();
         fresh.Label = "Renamed";
         fresh.ZoneCount = 55;
         fresh.MatrixWidth = 5;
         fresh.MatrixHeight = 11;
 
-        LifxLight tube = LifxDiscovery.Merge([SuperColourTube()], [fresh])[0];
+        LifxLight tube = LifxDiscovery.Merge([SuperColorTube()], [fresh])[0];
 
         Assert.AreEqual("Renamed", tube.Label);
         Assert.AreEqual(55, tube.ZoneCount);
@@ -905,7 +905,7 @@ public class LifxPluginTests
     {
         // Persisted state knows the Tube; the live scan only hears the bulb
         // (the Tube is busy being streamed to and dropped the broadcast)
-        var (_, host, _) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, _) = await CreateInitializedAsync([SuperColorTube()]);
         _ = await Protocol(host, LifxPlugin.PixelProtocolId)
             .GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
@@ -935,7 +935,7 @@ public class LifxPluginTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var discovery = new LifxDiscovery((_, _) =>
-            Task.FromResult<IReadOnlyList<LifxLight>>([SuperColourTube()]));
+            Task.FromResult<IReadOnlyList<LifxLight>>([SuperColorTube()]));
         discovery.ScanCompleted = async _ =>
         {
             entered.TrySetResult();
@@ -967,9 +967,9 @@ public class LifxPluginTests
     }
 
     [TestMethod]
-    public async Task SendPixel_WritesSet64ForSuperColourTube()
+    public async Task SendPixel_WritesSet64ForSuperColorTube()
     {
-        var (_, host, sent) = await CreateInitializedAsync([SuperColourTube()]);
+        var (_, host, sent) = await CreateInitializedAsync([SuperColorTube()]);
         IPluginOutputProtocol protocol = Protocol(host, LifxPlugin.PixelProtocolId);
         _ = await protocol.GetDestinationOptionsAsync(refresh: true, CancellationToken.None);
 
@@ -1060,8 +1060,8 @@ public class LifxPluginTests
     public void DestinationLabel_AppendsPixelCountForMultipixelDevices()
     {
         Assert.AreEqual(
-            "Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)",
-            LifxDiscovery.DestinationLabel(SuperColourTube()));
+            "Bar (192.168.1.30, LIFX SuperColor Tube, 52 px)",
+            LifxDiscovery.DestinationLabel(SuperColorTube()));
     }
 
     [TestMethod]
@@ -1078,10 +1078,10 @@ public class LifxPluginTests
             Product = 72,
         };
 
-    private static LifxLight SuperColourTube() =>
+    private static LifxLight SuperColorTube() =>
         new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.30", "Bar")
         {
-            ModelName = "LIFX SuperColour Tube",
+            ModelName = "LIFX SuperColor Tube",
             Product = 218,
             Layout = LifxLayout.Matrix,
             MatrixWidth = 4,
@@ -1091,13 +1091,13 @@ public class LifxPluginTests
         };
 
     /// <summary>
-    /// What a real SuperColour Tube reports: a 5×11 tile (55 zones) of
+    /// What a real SuperColor Tube reports: a 5×11 tile (55 zones) of
     /// which 52 light (indexes 2-4 are dead).
     /// </summary>
     private static LifxLight RealTube() =>
         new([9, 8, 7, 6, 5, 4, 3, 2], "192.168.1.31", "Tube")
         {
-            ModelName = "LIFX SuperColour Tube",
+            ModelName = "LIFX SuperColor Tube",
             Product = 217,
             Layout = LifxLayout.Matrix,
             MatrixWidth = 5,

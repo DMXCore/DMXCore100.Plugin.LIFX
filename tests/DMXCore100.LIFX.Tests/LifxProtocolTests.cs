@@ -12,8 +12,8 @@ public class LifxProtocolTests
     public void ProductNames_MatchRegistry()
     {
         Assert.AreEqual("LIFX A19", LifxProducts.ModelName(1, 72));
-        Assert.AreEqual("LIFX SuperColour Tube", LifxProducts.ModelName(1, 218));
-        Assert.AreEqual("LIFX SuperColour Luna", LifxProducts.ModelName(1, 219));
+        Assert.AreEqual("LIFX SuperColor Tube", LifxProducts.ModelName(1, 218));
+        Assert.AreEqual("LIFX SuperColor Luna", LifxProducts.ModelName(1, 219));
     }
 
     [TestMethod]
@@ -149,7 +149,7 @@ public class LifxProtocolTests
     }
 
     [TestMethod]
-    public void SuperColourAndStrips_HavePixelLayouts_A19DoesNot()
+    public void SuperColorAndStrips_HavePixelLayouts_A19DoesNot()
     {
         Assert.AreEqual(LifxLayout.Matrix, LifxProducts.Layout(218));
         Assert.AreEqual(LifxLayout.Matrix, LifxProducts.Layout(219));
@@ -180,7 +180,7 @@ public class LifxProtocolTests
         LifxDiscovery.ApplyMessage(light, LifxConstants.StateVersion, version);
         Assert.AreEqual(218u, light.Product);
         Assert.AreEqual(LifxLayout.Matrix, light.Layout);
-        Assert.AreEqual("LIFX SuperColour Tube", light.ModelName);
+        Assert.AreEqual("LIFX SuperColor Tube", light.ModelName);
 
         light.Layout = LifxLayout.Linear;
         light.ZoneCount = 8;
@@ -220,7 +220,7 @@ public class LifxProtocolTests
     }
 
     [TestMethod]
-    public void ZonePackets_SuperColour_EmitsSet64()
+    public void ZonePackets_SuperColor_EmitsSet64()
     {
         var light = new LifxLight(new byte[8], "10.0.0.2")
         {

@@ -54,7 +54,7 @@ public class LifxPlugin : IPlugin
             Id = PluginBuildInfo.Id,
             Name = PluginBuildInfo.Name,
             Version = PluginBuildInfo.Version,
-            Description = "Drives LIFX WiFi bulbs and SuperColour / pixel fixtures from DMX over the LAN protocol.",
+            Description = "Drives LIFX WiFi bulbs and SuperColor / pixel fixtures from DMX over the LAN protocol.",
         };
     }
 

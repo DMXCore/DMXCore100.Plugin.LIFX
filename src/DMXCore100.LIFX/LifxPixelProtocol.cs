@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace DMXCore100.LIFX;
 
 /// <summary>
-/// Multipixel LIFX output for SuperColour Tube/Luna, Beam, strips, and tiles.
+/// Multipixel LIFX output for SuperColor Tube/Luna, Beam, strips, and tiles.
 /// Channel count is pixels × the per-pixel width of the mapping's Color mode
 /// (RGB, RGBW, +CT, 8- or 16-bit) from discovered zone geometry.
 /// </summary>
@@ -180,7 +180,7 @@ internal sealed class LifxPixelSession : IPluginOutputSession
             pixelColors[i] = this.mode.ToHsbk(ch[o..]);
         }
 
-        // Dead zones (SuperColour Tube 2-4) stay black
+        // Dead zones (SuperColor Tube 2-4) stay black
         Hsbk[] colors = LifxPixelMap.ToDeviceZones(this.light, pixelColors);
 
         // Snap the frame when any zone makes a big jump, blend small steps

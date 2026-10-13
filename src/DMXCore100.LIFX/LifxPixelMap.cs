@@ -4,13 +4,13 @@ namespace DMXCore100.LIFX;
 /// Maps the pixels a mapping exposes onto the zone indexes the device
 /// actually lights. Some LIFX matrix products report a padded tile whose
 /// grid has more entries than physical zones (the LAN docs describe the
-/// Candle as a 5×6 tile with 26 zones); the SuperColour Tube reports 5×11 =
+/// Candle as a 5×6 tile with 26 zones); the SuperColor Tube reports 5×11 =
 /// 55 but has 52 zones. Everywhere else the map is the identity.
 /// </summary>
 internal static class LifxPixelMap
 {
     /// <summary>
-    /// SuperColour Tube (products 217/218), as measured on hardware
+    /// SuperColor Tube (products 217/218), as measured on hardware
     /// (2026-08-18): device indexes 0-1 are the two zones on top, 2-4 are
     /// dead, and 5-54 run from the top of the side down to the base.
     /// </summary>
@@ -31,7 +31,7 @@ internal static class LifxPixelMap
     /// </summary>
     public static int[]? DeviceIndexes(LifxLight light)
     {
-        if (LifxProducts.IsSuperColourTube((int)light.Product) && light.ZoneCount == TubeReportedZones)
+        if (LifxProducts.IsSuperColorTube((int)light.Product) && light.ZoneCount == TubeReportedZones)
         {
             return TubeMap;
         }

@@ -16,7 +16,7 @@ internal delegate ValueTask LifxDatagramSender(
 /// <summary>
 /// One-shot LIFX LAN discovery: broadcast GetService and collect StateService
 /// replies, then fetch label/version so the Outputs Discover list can show
-/// a name and product. Zone-capable devices (SuperColour, Beam, strips,
+/// a name and product. Zone-capable devices (SuperColor, Beam, strips,
 /// tiles) are then queried for pixel geometry. Destination value is the
 /// device IP.
 /// </summary>

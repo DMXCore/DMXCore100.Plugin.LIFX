@@ -3,7 +3,7 @@ namespace DMXCore100.LIFX;
 /// <summary>
 /// LIFX product names and pixel-family layout from
 /// https://github.com/LIFX/products. Switches are skipped — they are not
-/// lights. SuperColour Tube/Luna, Beam, strips, and tiles are matrix or
+/// lights. SuperColor Tube/Luna, Beam, strips, and tiles are matrix or
 /// linear so discovery can request zone geometry.
 /// </summary>
 internal static class LifxProducts
@@ -39,7 +39,7 @@ internal static class LifxProducts
         [37] = "LIFX DL",
         [38] = "LIFX Beam",
         [39] = "LIFX DL WW 700lm",
-        [40] = "LIFX DL Colour 700lm",
+        [40] = "LIFX DL Color 700lm",
         [43] = "LIFX (A19)",
         [44] = "LIFX (BR30)",
         [45] = "LIFX+ (A19)",
@@ -76,12 +76,12 @@ internal static class LifxProducts
         [89] = "LIFX Switch",
         [90] = "LIFX Clean A19 1100lm",
         [91] = "LIFX Color 800lm",
-        [92] = "LIFX Colour 1000lm",
+        [92] = "LIFX Color 1000lm",
         [93] = "LIFX Color A19 1100lm",
         [94] = "LIFX Color BR30 1100lm",
         [96] = "LIFX Candle WW",
-        [97] = "LIFX Colour A19 1200lm",
-        [98] = "LIFX Colour BR30 1100lm",
+        [97] = "LIFX Color A19 1200lm",
+        [98] = "LIFX Color BR30 1100lm",
         [99] = "LIFX Clean A19 1200lm",
         [100] = "LIFX Filament Clear",
         [101] = "LIFX Filament Amber",
@@ -107,7 +107,7 @@ internal static class LifxProducts
         [127] = "LIFX Mini 3.1 W US",
         [128] = "LIFX Mini 3.1 W Intl",
         [129] = "LIFX Color 800",
-        [130] = "LIFX Colour 1000",
+        [130] = "LIFX Color 1000",
         [131] = "LIFX White to Warm 800",
         [132] = "LIFX White to Warm 1000",
         [133] = "LIFX White 650",
@@ -167,10 +167,10 @@ internal static class LifxProducts
         [214] = "LIFX Permanent Outdoor Intl",
         [215] = "LIFX Candle C",
         [216] = "LIFX Candle C Intl",
-        [217] = "LIFX SuperColour Tube",
-        [218] = "LIFX SuperColour Tube",
-        [219] = "LIFX SuperColour Luna",
-        [220] = "LIFX SuperColour Luna",
+        [217] = "LIFX SuperColor Tube",
+        [218] = "LIFX SuperColor Tube",
+        [219] = "LIFX SuperColor Luna",
+        [220] = "LIFX SuperColor Luna",
         [221] = "LIFX Spot Intl",
         [222] = "LIFX Path Intl",
         [223] = "LIFX DL",
@@ -200,10 +200,10 @@ internal static class LifxProducts
     ];
 
     /// <summary>
-    /// SuperColour Tube (US / Intl): reports a 5×11 tile but has 52 zones,
+    /// SuperColor Tube (US / Intl): reports a 5×11 tile but has 52 zones,
     /// see <see cref="LifxPixelMap"/>.
     /// </summary>
-    public static bool IsSuperColourTube(int product) => product is 217 or 218;
+    public static bool IsSuperColorTube(int product) => product is 217 or 218;
 
     public static string ModelName(int vendor, int product)
     {

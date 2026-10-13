@@ -1,6 +1,6 @@
 # DMX Core 100 — LIFX Plugin
 
-Drives **LIFX** WiFi color bulbs and SuperColour / pixel fixtures from DMX
+Drives **LIFX** WiFi color bulbs and SuperColor / pixel fixtures from DMX
 Core fixture or playback data over the [LIFX LAN protocol](https://lan.developer.lifx.com/).
 No cloud account required.
 
@@ -17,7 +17,7 @@ On the Core's **Outputs** page, add an output of type **LIFX**:
    (one color slice per discovered zone, in the mapping's **Color mode**).
 2. **Destination Address** — the device IP. Use **Discover**, or type a
    known address. Pixel devices show a zone count, e.g.
-   `Bar (192.168.1.30, LIFX SuperColour Tube, 52 px)`; picking one also
+   `Bar (192.168.1.30, LIFX SuperColor Tube, 52 px)`; picking one also
    fills the mapping's **Pixels** field automatically. A Pixel mapping's
    **Color mode** picks the per-pixel layout: RGB, RGB+CT, RGBW, RGBW+CT,
    each 8-bit or 16-bit (the same eight layouts as the color protocols).
@@ -69,9 +69,9 @@ features 1.6). Older Cores stay on plugin 1.2.3.
 | `LIFX_COLOR_CT_16` | RGB + CT, coarse + fine (8 ch) | |
 | `LIFX_COLOR_RGBW_16` | RGB + W, coarse + fine (8 ch) | |
 | `LIFX_COLOR_RGBW_CT_16` | RGB + W + CT, coarse + fine (10 ch) | |
-| `LIFX_PIXEL` | Color mode × zones (3–10 ch per pixel) | SuperColour Tube/Luna, Beam, Z, Neon, String, Tile. The Pixels field (stamped by Discover) and the Color mode field set the channel count; discovery results also persist across restarts. A mapping saved before the Color mode field existed keeps its old **16-bit** toggle (RGB 16-bit when on). |
+| `LIFX_PIXEL` | Color mode × zones (3–10 ch per pixel) | SuperColor Tube/Luna, Beam, Z, Neon, String, Tile. The Pixels field (stamped by Discover) and the Color mode field set the channel count; discovery results also persist across restarts. A mapping saved before the Color mode field existed keeps its old **16-bit** toggle (RGB 16-bit when on). |
 
-**SuperColour Tube pixel count:** the Tube's firmware reports a 5×11 tile
+**SuperColor Tube pixel count:** the Tube's firmware reports a 5×11 tile
 (55 zones) but only 52 light — device indexes 0–1 are the two zones on
 top, 2–4 are dead, and 5–54 run from the top of the side down to the base
 (measured on hardware). The plugin exposes it as **52 pixels** in order
@@ -85,7 +85,7 @@ so the fixture footprint matches.
 - **No lights in Discover:** confirm the bulbs are powered and on the same
   subnet, then press Discover again. The plugin broadcasts LIFX
   `GetService` (not mDNS), then queries labels, product, and zone/tile
-  geometry for SuperColour / strips, re-asking devices that did not answer.
+  geometry for SuperColor / strips, re-asking devices that did not answer.
   A device that is busy being streamed to sometimes drops a request; a
   scan never removes a previously seen device or forgets its geometry, so
   the list only ever grows (a device whose IP is taken over by another

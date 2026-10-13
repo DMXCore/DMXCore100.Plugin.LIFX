@@ -7,14 +7,14 @@
     <!-- The SDK generates manifest.json and PluginBuildInfo from these -->
     <PluginId>lifx</PluginId>
     <PluginDisplayName>LIFX</PluginDisplayName>
-    <Version>1.3.2</Version>
+    <Version>1.3.3</Version>
     <Authors>DMX Core</Authors>
 
     <!-- Plugin registry (nuget.org) package metadata. DMXCore.Plugin.* is the
          reserved first-party prefix; the package is produced by `dotnet pack`
          via the DMXCore.PluginSdk pack targets. -->
     <PackageId>DMXCore.Plugin.LIFX</PackageId>
-    <Description>LIFX output for the DMX Core 100 lighting controller: drives LIFX WiFi color bulbs and SuperColour / pixel fixtures from DMX channel data over the LIFX LAN protocol, no cloud account required.</Description>
+    <Description>LIFX output for the DMX Core 100 lighting controller: drives LIFX WiFi color bulbs and SuperColor / pixel fixtures from DMX channel data over the LIFX LAN protocol, no cloud account required.</Description>
     <PackageProjectUrl>https://docs.dmxcore.com/dmx-core-100/integrations/lifx</PackageProjectUrl>
     <RepositoryUrl>https://github.com/DMXCore/DMXCore100.Plugin.LIFX</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

@@ -6,7 +6,7 @@ namespace DMXCore100.LIFX;
 /// updates blend into a smooth fade; a big jump (a flash, bump, or snap) goes
 /// out with no transition, because the firmware eases even a 75 ms fade into
 /// something that reads as a soft half-second change. Hardware-checked on a
-/// SuperColour Tube: 0 ms snaps, 75 ms visibly fades on a 24 % to 100 % step.
+/// SuperColor Tube: 0 ms snaps, 75 ms visibly fades on a 24 % to 100 % step.
 /// </summary>
 internal static class LifxTransition
 {
